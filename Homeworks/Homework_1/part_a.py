@@ -1,3 +1,7 @@
+# Authored By: Matthew Ketas
+# Last Edited: 9/14/2026
+# LLMs Used: Claude Opus 5
+
 import re
 from pathlib import Path
 from ollama import chat, ChatResponse
@@ -5,7 +9,7 @@ from ollama import chat, ChatResponse
 # Path and prompt definitions
 DEFAULT_PROMPT = ('Design a fault-detection strategy for a temperature sensor used in an embedded monitoring system. '
                   'Provide three possible approaches and recommend one.')
-FOLDER_PATH = './Responses'
+FOLDER_PATH = Path(__file__).parent / 'Responses'
 MODEL = 'qwen3.5'
 N_RESPONSES = 10
 OPTIONS = {
@@ -15,7 +19,7 @@ OPTIONS = {
 }
 
 # Markdown file creation / management
-folder = Path(FOLDER_PATH)
+folder = FOLDER_PATH
 folder.mkdir(parents=True, exist_ok=True)
 pattern = re.compile(r'Responses(\d+)\.md')
 existing = [int(m.group(1)) for f in folder.glob('Responses*.md')
