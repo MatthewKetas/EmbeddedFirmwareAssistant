@@ -1,0 +1,5 @@
+All responses are generated using Qwen3.5-35B-A3B-GGUF through an api call to lemonade server
+All respones use the following default parameters 
+    TEMPERATURE = 1.0 
+    TOP_P = 0.9 
+    TOP_K = 40
