@@ -1,4 +1,4 @@
-Prompt: design a simple data-acquisition system that samples a temperature sensor and reportsabnormal measurements.
+Prompt: design a simple data-acquisition system that samples a temperature sensor and reportsabnormal measurements. \
 Response: Here is a design for a simple, robust Temperature Data Acquisition System (DAQ). This design focuses on reliability, cost-effectiveness, and ease of implementation using a microcontroller.
 
 ### 1. System Overview
