@@ -1,4 +1,5 @@
 import hashlib
+import importlib.util
 import os
 import shlex
 import time
@@ -12,6 +13,9 @@ from qdrant_client.models import (
     Distance, FieldCondition, Filter, MatchAny, MatchValue, PointStruct, VectorParams,
 )
 
+# Everything (input files, library, cache) lives next to this script, wherever you launch it from.
+SCRIPT_DIR = Path(__file__).resolve().parent
+
 # --- Configuration -----------------------------------------------------
 BASE_URL = "http://localhost:13305/api/v1"
 API_KEY = "lemonade"                        # ignored by Lemonade
@@ -24,7 +28,7 @@ TEMPERATURE = 1.0
 TOP_P = 0.9
 TOP_K = 40
 
-QDRANT_PATH = "./qdrant_data"               # on-disk, no server needed (created in the current folder)
+QDRANT_PATH = str(SCRIPT_DIR / "qdrant_data")   # on-disk vector library, no server needed
 COLLECTION = "docs"
 TOP_N_CHUNKS = 6                            # chunks sent to the chat model per question
 EMBED_BATCH = 16
@@ -34,12 +38,15 @@ MAX_CHARS = 100_000                         # only used by /file (whole-document
 UNLOAD_AFTER_INGEST = True    # after /add finishes embedding a file (recommended)
 UNLOAD_AFTER_QUERY = False    # after embedding each question (saves VRAM but reloads the 8B every turn)
 
+# Docling speed settings
+DO_OCR = False                           # set False to skip OCR entirely (see compare_ocr.py to test)
+DOCLING_THREADS = os.cpu_count() or 8   # default is only 4; use all cores
+OCR_BACKEND = "onnxruntime"             # usually much faster on CPU than "torch" (pip install onnxruntime)
+OCR_MIN_IMAGE_AREA = 0.10               # only OCR images covering >=10% of the page (default 0.05); skips logos/icons
+CACHE_DIR = SCRIPT_DIR / ".docling_cache"       # converted documents cached here
+
 # Qwen3-Embedding wants an instruction on the QUERY side only (not on documents).
 QUERY_TASK = "Given a question, retrieve passages from documents that answer it"
-
-DO_OCR = False                          # your test showed OCR only found the "ESPRESSIF" logo, for +218s
-DOCLING_THREADS = os.cpu_count() or 8   # Docling defaults to only 4
-CACHE_DIR = Path(".docling_cache")      # converted docs cached here; re-adding never reconverts
 # -----------------------------------------------------------------------
 
 client = OpenAI(base_url=BASE_URL, api_key=API_KEY)
@@ -70,10 +77,10 @@ def ensure_collection() -> None:
 
 
 def resolve_path(path: str) -> Path:
-    """Bare names resolve against the current folder; full paths also work."""
+    """Relative paths (bare names or subfolders like docs/x.pdf) resolve against the script folder; full paths also work."""
     p = Path(path.strip('"\'')).expanduser()
     if not p.is_absolute():
-        p = Path.cwd() / p
+        p = SCRIPT_DIR / p
     if not p.exists():
         raise FileNotFoundError(f"Not found: {p}")
     return p
@@ -81,19 +88,29 @@ def resolve_path(path: str) -> Path:
 
 def _build_converter():
     from docling.datamodel.base_models import InputFormat
-    from docling.datamodel.pipeline_options import PdfPipelineOptions
+    from docling.datamodel.pipeline_options import PdfPipelineOptions, RapidOcrOptions
     from docling.document_converter import DocumentConverter, PdfFormatOption
     try:
         from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
     except ImportError:  # older Docling versions
         from docling.datamodel.pipeline_options import AcceleratorDevice, AcceleratorOptions
 
+    backend = OCR_BACKEND
+    if backend == "onnxruntime" and importlib.util.find_spec("onnxruntime") is None:
+        print("[onnxruntime not installed, falling back to the slower torch OCR backend. "
+              "Run: pip install onnxruntime]")
+        backend = "torch"
+
     opts = PdfPipelineOptions()
     opts.do_ocr = DO_OCR
-    opts.do_table_structure = True       # keeps pin tables, register maps, electrical specs
+    opts.do_table_structure = True
+    ocr_kwargs = {"backend": backend}
+    if "bitmap_area_threshold" in RapidOcrOptions.model_fields:
+        ocr_kwargs["bitmap_area_threshold"] = OCR_MIN_IMAGE_AREA
+    opts.ocr_options = RapidOcrOptions(**ocr_kwargs)
     opts.accelerator_options = AcceleratorOptions(
         num_threads=DOCLING_THREADS,
-        device=AcceleratorDevice.AUTO,
+        device=AcceleratorDevice.AUTO,   # uses a CUDA GPU if PyTorch can see one, else CPU
     )
     return DocumentConverter(
         format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
@@ -106,9 +123,7 @@ def convert(path: Path):
     from docling_core.types.doc import DoclingDocument
 
     st = path.stat()
-    key = hashlib.sha1(
-        f"{path.resolve()}|{st.st_size}|{st.st_mtime_ns}|ocr={DO_OCR}".encode()
-    ).hexdigest()[:16]
+    key = hashlib.sha1(f"{path.resolve()}|{st.st_size}|{st.st_mtime_ns}|ocr={DO_OCR}".encode()).hexdigest()[:16]
     cache_file = CACHE_DIR / f"{path.stem}.{key}.json"
     if cache_file.exists():
         print(f"[using cached conversion for {path.name}]")
@@ -264,9 +279,9 @@ def stream_reply(messages: list) -> str:
 
 HELP = (
     "Commands:\n"
-    "  /add <file>              index a file from the current folder into the library\n"
+    "  /add <file>              index a file (relative to the script folder) into the library\n"
     "  /list                    show indexed files\n"
-    "  /only <f1> [f2 ...]|all  restrict retrieval to one or more files (use quotes around names with spaces)\n"
+    "  /only <f1> [f2 ...]|all  restrict retrieval to one or more files (quote names with spaces)\n"
     "  /clear                   reset the chat (library is kept)\n"
     "  /wipe                    delete the whole library\n"
     "  /quit                    exit\n"
@@ -275,7 +290,7 @@ HELP = (
 
 def interactive_loop():
     print(f"Chat: {CHAT_MODEL} | Embeddings: {EMBED_MODEL} | Qdrant: {QDRANT_PATH}")
-    print(f"Working folder: {Path.cwd()}")
+    print(f"Script folder: {SCRIPT_DIR}")
     print(HELP)
 
     history: list[dict] = []
