@@ -1,0 +1,6 @@
+{
+  "name": "Hardware Copilot - Embedded Datasheet & SVD Studio",
+  "description": "Desktop-grade AI copilot for embedded hardware engineers, SVD register analysis, datasheet RAG, and micro-controller peripherals.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
