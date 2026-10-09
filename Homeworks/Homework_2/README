@@ -1,5 +1,52 @@
-All responses are generated using Qwen3.5-35B-A3B-GGUF through an api call to lemonade server
-All respones use the following default parameters 
-    TEMPERATURE = 1.0 
-    TOP_P = 0.9 
-    TOP_K = 40
+# Homework 2 report materials
+
+Location: Homeworks/Homework_2
+Branch checked: hw-2
+Inventory checked: October 8, 2026
+
+## Available source material
+
+| File | Contents / report use |
+| --- | --- |
+| ECE2195_Engineering with AI_F26_HW2.pdf | Assignment and deliverables; copied unchanged from Desktop. |
+| part_a_response.md | Baseline prompt and saved model response. |
+| part_b_response.md | Structured prompt and saved model response. |
+| HW2_C_extra.docx | Part C zero-, one-, and three-shot prompts/outputs, comparison, example-selection rationale, and extra-credit example-set experiments. |
+| part_d_response | Structured-output prompt and original saved response. |
+| part_d_output.json | Verbatim extracted Part D response; retains the original duplicate key for evidence. |
+| part_d_validation.md | Basic JSON structure and duplicate-key validation results. |
+| lemonade_chat.py | Existing script used to communicate with the local Lemonade server. |
+
+## Recorded models and settings
+
+The original README records Qwen3.5-35B-A3B-GGUF through the Lemonade API,
+with temperature 1.0, top_p 0.9, and top_k 40. These values match
+lemonade_chat.py and are the recorded defaults for Parts A, B, and D;
+individual run metadata is not included in the saved responses.
+
+Part C's document separately records Claude Opus 4.1, temperature 0.2,
+and max tokens 600. Do not describe all parts as using the same model or
+settings. Differences between Parts A/B/D and Part C are not a controlled
+comparison of prompting alone.
+
+## What remains for the report
+
+- Evaluate Part A for completeness, correctness, and specification compliance.
+- Build the required comparison table using the saved evidence.
+- Explain the recommended prompt architecture and design rationale.
+- Include the Part D validation outcome: basic shape passes, but duplicate
+  `logic` keys cause a fault-check value to be lost under ordinary parsing.
+- Review the engineering claims and conclusions in the saved model outputs
+  and Part C document; their presence here does not establish correctness.
+- Keep each experiment's actual requirements clear: A is broad; B/D use
+  examples such as 1 Hz and 0-5 V; C specifies 10 Hz, 12-bit ADC, and 3.3 V.
+- Extra-credit example-set prompts and outputs are present in the Part C
+  document. Repeated trials and quantitative significance evidence are not
+  included; avoid presenting its qualitative conclusion as a statistical test.
+
+The source material for all four parts and the extra-credit experiment is
+present locally in this folder. The report itself has not been written.
+No new model outputs were generated during this inventory.
+
+The file beginning with `~$` is a temporary Microsoft Word lock file, not
+homework data. Leave it out of any submission or commit.

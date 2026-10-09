@@ -1,0 +1,72 @@
+{
+  "architecture": [
+    "System follows a polling architecture driven by a real-time timer interrupt.",
+    "Data Flow: Timer Tick -> Sensor Driver (ADC) -> Digital Filter -> Unit Conversion -> Threshold Comparator -> Alert Handler -> I/O Output.",
+    "Control Loop: Non-blocking main loop handles I/O, Timer ISR handles sampling."
+  ],
+  "components": [
+    {
+      "id": "CMPT-001",
+      "name": "System Timer",
+      "role": "Generates 1Hz sampling interrupt."
+    },
+    {
+      "id": "CMPT-002",
+      "name": "Sensor Interface Driver",
+      "role": "Reads raw ADC values or I2C/SPI data."
+    },
+    {
+      "id": "CMPT-003",
+      "name": "Signal Filter",
+      "role": "3-point Moving Average to reduce noise."
+    },
+    {
+      "id": "CMPT-004",
+      "name": "State Machine",
+      "role": "Tracks Normal, Warning, Fault, Sensor_Error states."
+    },
+    {
+      "id": "CMPT-005",
+      "name": "Alert Reporter",
+      "role": "Writes to Serial Log or toggles GPIO pin."
+    }
+  ],
+  "fault_detection": [
+    {
+      "type": "Threshold Table",
+      "logic": [
+        "NORMAL: 10.0 <= Temp <= 40.0",
+        "WARNING: 0.0 <= Temp < 10.0 OR 40.0 < Temp <= 60.0",
+        "FAULT: Temp < 0.0 OR Temp > 60.0"
+      ]
+    },
+    {
+      "type": "Hysteresis/Debounce",
+      "logic": "Transition to Warning/Fault requires 3 consecutive samples out of range.",
+      "rationale": "Prevents transient noise spikes from triggering false alerts."
+    },
+    {
+      "type": "Sensor Health Check",
+      "logic": "Raw ADC value out of [0, 4095] range (assuming 12-bit) -> Flag SENSOR_FAIL.",
+      "logic": "Read timeout > 100ms -> Flag SENSOR_FAIL."
+    },
+    {
+      "type": "Pseudocode_Logic",
+      "code": "IF timer_1Hz THEN\n  raw = read_sensor();\n  IF raw_error THEN state = ERROR; BREAK;\n  val = filter(raw);\n  temp = convert_units(val);\n  IF temp < 0 OR temp > 60 THEN count++; IF count >= 3 state = FAULT;\n  ELSE IF temp < 10 OR temp > 40 THEN count++; IF count >= 3 state = WARNING;\n  ELSE count = 0; state = NORMAL;\n  report(state, temp);\nENDIF"
+    }
+  ],
+  "assumptions": [
+    "Sensor provides linear output over 0-100°C range mapped to ADC 0-4095.",
+    "Power supply voltage is stable (±5%).",
+    "Communication bus (I2C/ADC) does not experience sustained corruption.",
+    "Human operator monitors logs within 1 minute of alert.",
+    "System clock source is accurate enough for 1% timing variance."
+  ],
+  "risks": [
+    "Sensor wiring loose -> reads 0V -> False Fault <0°C.",
+    "ADC Reference voltage drifts -> Systematic calibration error.",
+    "High electromagnetic interference -> Single sample spikes -> False Warning.",
+    "Timer interrupt latency -> Sampling jitter > 10ms.",
+    "Buffer overflow -> Log file truncates old alerts."
+  ]
+}
