@@ -1,0 +1,98 @@
+Answer the question using the context below. Cite sources like [file, p.N]. If the answer isn't in the context, say so.
+
+=== CONTEXT ===
+[Passage A | ESP32.pdf, p.43 | 4.9.1]
+4.9.1 Analog-to-Digital Converter (ADC)
+ESP32 integrates two 12-bit SAR ADCs and supports measurements on 18 channels (analog-enabled pins).
+The ULP coprocessor in ESP32 is also designed to measure voltage, while operating in the sleep mode, which
+enables low-power consumption. The CPU can be woken up by a threshold setting and/or via other
+triggers.
+
+---
+
+[Passage B | ESP32.pdf, p.29 | 4.2]
+4.2 System Clocks
+4.2.1 CPU Clock
+Upon reset, an external crystal clock source is selected as the default CPU clock. The external crystal clock
+source also connects to a PLL to generate a high-frequency clock (typically 160 MHz).
+In addition, ESP32 has an internal 8 MHz oscillator. The application can select the clock source from the
+external crystal clock source, the PLL clock or the internal 8 MHz oscillator. The selected clock source drives
+the CPU clock directly, or after division, depending on the application.
+4.2.2 RTC Clock
+The RTC clock has five possible sources:
+• External low-speed (32 kHz) crystal clock
+• External crystal clock divided by 4
+• Internal RC oscillator (typically about 150 kHz, and adjustable)
+• Internal 8 MHz oscillator
+• Internal 31.25 kHz clock (derived from the internal 8 MHz oscillator divided by 256)
+When the chip is in the normal power mode and needs faster CPU accessing, the application can choose the
+external high-speed crystal clock divided by 4 or the internal 8 MHz oscillator. When the chip operates in the
+low-power mode, the application chooses the external low-speed (32 kHz) crystal clock, the internal RC clock
+or the internal 31.25 kHz clock.
+
+---
+
+[Passage C | ESP32.pdf, p.31 | 4.4.1]
+4.4 Timers and Watchdogs
+4.4.1 General Purpose Timers
+There are four general-purpose timers embedded in the chip. They are all 64-bit generic timers which are
+based on 16-bit prescalers and 64-bit auto-reload-capable up/down-timers.
+The timers feature:
+• A 16-bit clock prescaler, from 2 to 65536
+• A 64-bit timer
+• Configurable up/down timer: incrementing or decrementing
+• Halt and resume of time-base counter
+• Auto-reload at alarming
+• Software-controlled instant reload
+• Level and edge interrupt generation
+For details, see ESP32 Technical Reference Manual > Chapter Timer Group.
+
+---
+
+[Passage D | ESP32.pdf, p.32 | 4.5]
+4.5 Cryptographic Hardware Accelerators
+ESP32 is equipped with hardware accelerators of general algorithms, such as AES (FIPS PUB 197), SHA (FIPS
+PUB 180-4), and RSA. The chip also supports independent arithmetic, such as large-number modular
+multiplication and large-number multiplication. The maximum operation length for RSA, large-number modular
+multiplication, and large-number multiplication is 4096 bits.
+The hardware accelerators greatly improve operation speed and reduce software complexity. They also
+support code encryption and dynamic decryption, which ensures that code in the flash will not be
+hacked.
+
+---
+
+[Passage E | ESP32.pdf, p.31 | 4.4.2]
+4.4.2 Watchdog Timers
+The chip has three watchdog timers: one in each of the two timer modules (called the Main Watchdog Timer,
+or MWDT) and one in the RTC module (called the RTC Watchdog Timer, or RWDT). These watchdog timers are
+intended to recover from an unforeseen fault causing the application program to abandon its normal
+sequence. A watchdog timer has four stages. Each stage may trigger one of three or four possible actions
+upon the expiry of its programmed time period, unless the watchdog is fed or disabled. The actions are:
+
+---
+
+[Passage F | ESP32.pdf, p.32 | 4.4.2, continued]
+interrupt, CPU reset, core reset, and system reset. Only the RWDT can trigger the system reset, and is able to
+reset the entire chip, including the RTC itself. A timeout value can be set for each stage individually.
+During flash boot the RWDT and the first MWDT start automatically in order to detect, and recover from,
+booting problems.
+The watchdogs have the following features:
+• Four stages, each of which can be configured or disabled separately
+• A programmable time period for each stage
+• One of three or four possible actions (interrupt, CPU reset, core reset, and system reset) upon the expiry
+of each stage
+• 32-bit expiry counter
+• Write protection that prevents the RWDT and MWDT configuration from being inadvertently altered
+• SPI flash boot protection
+If the boot process from an SPI flash does not complete within a predetermined time period, the
+watchdog will reboot the entire system.
+For details, see ESP32 Technical Reference Manual > Chapter Watchdog Timers.
+
+---
+
+[Passage G | ESP32.pdf, p.31 | Table 4-2, notes continued]
+• In Modem-sleep mode, the CPU frequency changes automatically. The frequency depends on the CPU load and
+the peripherals used.
+=== END CONTEXT ===
+
+Question: An ESP32 RTOS application must request a control update every 1 ms while network traffic and other tasks run concurrently, and it must recover if execution stalls. Which documented timer features would support periodic hardware events, and which watchdog features would support fault recovery? Explain the distinct roles of the timers and watchdogs and the clock or power-mode considerations. Can the datasheet alone guarantee a 1 ms task deadline or specify the RTOS tick rate, task priorities, interrupt latency, or exact timer configuration? Identify the missing information and measurements required before making that guarantee. Use only the supplied ESP32 datasheet evidence. Cite the supporting sections or pages, distinguish documented facts from your design inferences, and state what the datasheet does not establish.
