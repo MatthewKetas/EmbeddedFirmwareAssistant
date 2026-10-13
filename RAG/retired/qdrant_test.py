@@ -19,7 +19,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 # --- Configuration -----------------------------------------------------
 BASE_URL = "http://localhost:13305/api/v1"
 API_KEY = "lemonade"                        # ignored by Lemonade
-CHAT_MODEL = "Qwen3.5-35B-A3B-GGUF"
+CHAT_MODEL = "Qwen3.6-35B-A3B-GGUF"
 # Must match the name Lemonade lists for your embedding model (check /api/v1/models)
 EMBED_MODEL = "Qwen3-Embedding-8B-GGUF"
 EMBED_DIM = 4096                            # Qwen3-Embedding-8B output size
@@ -142,11 +142,18 @@ def convert(path: Path):
     return doc
 
 
-def get_chunker():
+def get_chunker(): #fixes Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
     global _chunker
     if _chunker is None:
         from docling.chunking import HybridChunker
-        _chunker = HybridChunker()
+        from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
+        from transformers import AutoTokenizer
+
+        tok = HuggingFaceTokenizer(
+            tokenizer=AutoTokenizer.from_pretrained("Qwen/Qwen3-Embedding-8B"),
+            max_tokens=768,
+        )
+        _chunker = HybridChunker(tokenizer=tok, merge_peers=True)
     return _chunker
 
 
