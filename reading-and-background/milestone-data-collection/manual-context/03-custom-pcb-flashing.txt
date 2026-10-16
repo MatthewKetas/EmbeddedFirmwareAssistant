@@ -1,0 +1,118 @@
+Answer the question using the context below. Cite sources like [file, p.N]. If the answer isn't in the context, say so.
+
+=== CONTEXT ===
+[Passage A | ESP32.pdf, p.31 | 4.4.1]
+4.4 Timers and Watchdogs
+4.4.1 General Purpose Timers
+There are four general-purpose timers embedded in the chip. They are all 64-bit generic timers which are
+based on 16-bit prescalers and 64-bit auto-reload-capable up/down-timers.
+The timers feature:
+• A 16-bit clock prescaler, from 2 to 65536
+• A 64-bit timer
+• Configurable up/down timer: incrementing or decrementing
+• Halt and resume of time-base counter
+• Auto-reload at alarming
+• Software-controlled instant reload
+• Level and edge interrupt generation
+For details, see ESP32 Technical Reference Manual > Chapter Timer Group.
+
+---
+
+[Passage B | ESP32.pdf, p.22 | 3, Table 3-1]
+The default values of all the above eFuse bits are 0, which means that they are not burnt. Given that eFuse is
+one-time programmable, once an eFuse bit is programmed to 1, it can never be reverted to 0. For how to
+program eFuse bits, please refer to ESP32 Technical Reference Manual > Chapter eFuse Controller.
+The default values of the strapping pins, namely the logic levels, are determined by pins’internal weak
+pull-up/pull-down resistors at reset if the pins are not connected to any circuit, or connected to an external
+high-impedance circuit.
+Table 3-1. Default Configuration of Strapping Pins
+Strapping Pin Default Configuration Bit Value
+GPIO0 Pull-up 1
+GPIO2 Pull-down 0
+MTDI Pull-down 0
+MTDO Pull-up 1
+GPIO5 Pull-up 1
+To change the bit values, the strapping pins should be connected to external pull-down/pull-up resistances. If
+the ESP32 is used as a device by a host MCU, the strapping pin voltage levels can also be controlled by the
+host MCU.
+All strapping pins have latches. At system reset, the latches sample the bit values of their respective strapping
+pins and store them until the chip is powered down or shut down. The states of latches cannot be changed in
+any other way. It makes the strapping pin values available during the entire chip operation, and the pins are
+freed up to be used as regular IO pins after reset.
+The timing of signals connected to the strapping pins should adhere to the setup time and hold time
+specifications in Table 3-2 and Figure 3-1.
+
+---
+
+[Passage C | ESP32.pdf, p.23 | 3.1, Table 3-3 and its footnotes]
+3.1 Chip Boot Mode Control
+GPIO0 and GPIO2 control the boot mode after the reset is released. See Table 3-3 Chip Boot Mode
+Control.
+Table 3-3. Chip Boot Mode Control
+Boot Mode GPIO0 GPIO2
+SPI Boot Mode 1 Any value
+Joint Download Boot Mode 2 0 0
+1 Bold marks the default value and configuration.
+2 Joint Download Boot mode supports the following
+download methods:
+• SDIO Download Boot
+• UART Download Boot
+
+---
+
+[Passage D | ESP32.pdf, p.15 | Table 2-1, two rows; columns: Name / No. / Type / Function]
+U0RXD 40 I/O GPIO3, U0RXD, CLK_OUT2
+U0TXD 41 I/O GPIO1, U0TXD, CLK_OUT3, EMAC_RXD2
+
+---
+
+[Passage E | ESP32.pdf, p.14 | Table 2-1, CHIP_PU row; columns: Name / No. / Type / Function]
+High: On; enables the chip
+CHIP_PU 9 I Low: Off; the chip shuts down
+Note: Do not leave the CHIP_PU pin floating.
+
+---
+
+[Passage F | ESP32.pdf, p.19 | 2.5.3, opening paragraph]
+2.5.3 Chip Power-up and Reset
+Once the power is supplied to the chip, its power rails need a short time to stabilize. After that, CHIP_PU – the
+pin used for power-up and reset – is pulled high to activate the chip. For information on CHIP_PU as well as
+power-up and reset timing, see Figure 2-4 and Table 2-4.
+
+---
+
+[Passage G | ESP32.pdf, p.19 | Table 2-4; subscripts flattened with underscores]
+Table 2-4. Description of Timing Parameters for Power-up and Reset
+Parameter | Description | Min (µs)
+t_STBL | Time reserved for the 3.3 V rails to stabilize before the CHIP_PU pin is pulled high to activate the chip | 50
+t_RST | Time reserved for CHIP_PU to stay below V_IL_nRST to reset the chip (see Table 5-3) | 50
+
+---
+
+[Passage H | ESP32.pdf, p.23 | Table 3-2; subscripts flattened with underscores]
+Table 3-2. Description of Timing Parameters for the Strapping Pins
+Parameter | Description | Min (ms)
+t_SU | Setup time is the time reserved for the power rails to stabilize before the CHIP_PU pin is pulled high to activate the chip. | 0
+t_H | Hold time is the time reserved for the chip to read the strapping pin values after CHIP_PU is already high and before these pins start operating as regular IO pins. | 1
+
+---
+
+[Passage I | ESP32.pdf, p.24 | 3.1, continued]
+uart_download_dis controls boot mode behaviors:
+It permanently disables Download Boot mode when uart_download_dis is set to 1 (valid only for ESP32 chip
+revisions v3.0 and higher).
+
+---
+
+[Passage J | ESP32.pdf, p.32 | 4.5]
+4.5 Cryptographic Hardware Accelerators
+ESP32 is equipped with hardware accelerators of general algorithms, such as AES (FIPS PUB 197), SHA (FIPS
+PUB 180-4), and RSA. The chip also supports independent arithmetic, such as large-number modular
+multiplication and large-number multiplication. The maximum operation length for RSA, large-number modular
+multiplication, and large-number multiplication is 4096 bits.
+The hardware accelerators greatly improve operation speed and reduce software complexity. They also
+support code encryption and dynamic decryption, which ensures that code in the flash will not be
+hacked.
+=== END CONTEXT ===
+
+Question: An ESP32 is already soldered onto a custom PCB with working flash memory and no onboard USB-to-serial bridge. A host computer and an external 3.3 V logic USB-to-UART adapter are available, and the PCB exposes U0TXD, U0RXD, ground, CHIP_PU, GPIO0, and GPIO2. Which datasheet-supported download method is the most practical choice under these constraints? Identify the UART pin mappings, the boot-strapping levels for download versus normal flash boot, the reset and strapping timing requirements, and the eFuse setting that could prevent download mode. Separate this hardware-based recommendation from flashing software commands, adapter wiring details, or automation circuitry that the datasheet does not fully document. Use only the supplied ESP32 datasheet evidence. Cite the supporting sections or pages, distinguish documented facts from your design inferences, and state what the datasheet does not establish.
