@@ -2,6 +2,7 @@ import hashlib
 import importlib.util
 import os
 import shlex
+import signal
 import time
 import uuid
 from pathlib import Path
@@ -28,6 +29,7 @@ DOCS_DIR = next(
 BASE_URL = "http://localhost:13305/api/v1"
 API_KEY = "lemonade"                        # ignored by Lemonade
 CHAT_MODEL = "Qwen3.6-35B-A3B-GGUF"
+CHAT_CONTEXT_TOKENS = 16_384                # room for retrieved passages, history and the reply
 # Must match the name Lemonade lists for your embedding model (check /api/v1/models)
 EMBED_MODEL = "Qwen3-Embedding-8B-GGUF"
 EMBED_DIM = 4096                            # Qwen3-Embedding-8B output size
@@ -38,7 +40,7 @@ TOP_K = 40
 
 QDRANT_PATH = str(SCRIPT_DIR / "qdrant_data")   # on-disk vector library, no server needed
 COLLECTION = "docs"
-TOP_N_CHUNKS = 6                            # chunks sent to the chat model per question
+TOP_N_CHUNKS = 10                                # chunks sent to the chat model per question
 EMBED_BATCH = 16
 MAX_CHARS = 100_000                         # only used by /file (whole-document paste)
 
@@ -64,23 +66,35 @@ QUERY_TASK = "Given a question, retrieve passages from documents that answer it"
 HISTORY_FILE = SCRIPT_DIR / ".chat_history"
 # -----------------------------------------------------------------------
 
-client = OpenAI(base_url=BASE_URL, api_key=API_KEY)
-qdrant = QdrantClient(path=QDRANT_PATH)
+client = None
+qdrant = None
 
 _converter = None
 _chunker = None
 
 
-def unload_embed_model() -> None:
-    """Ask Lemonade to unload the embedding model. Failure is non-fatal."""
+def unload_model(model: str) -> None:
+    """Ask Lemonade to unload one model. Failure is non-fatal."""
     try:
-        r = httpx.post(f"{BASE_URL}/unload", json={"model_name": EMBED_MODEL}, timeout=30)
+        r = httpx.post(f"{BASE_URL}/unload", json={"model_name": model}, timeout=10)
         if r.status_code == 200:
-            print(f"[unloaded {EMBED_MODEL}]")
+            print(f"[unloaded {model}]")
         else:
             print(f"[unload returned {r.status_code}: {r.text[:200]}]")
     except Exception as e:
-        print(f"[could not unload embedding model: {e}]")
+        print(f"[could not unload {model}: {e}]")
+
+
+def teardown() -> None:
+    """Attempt every cleanup step without hiding the original error."""
+    for resource in (client, qdrant):
+        if resource is not None:
+            try:
+                resource.close()
+            except Exception as e:
+                print(f"[could not close {type(resource).__name__}: {e}]")
+    for model in (EMBED_MODEL, CHAT_MODEL):
+        unload_model(model)
 
 
 def ensure_collection() -> None:
@@ -207,7 +221,7 @@ def ingest(path_str: str) -> None:
     print(f"Embedding {len(texts)} chunks with {EMBED_MODEL}...")
     vectors = embed(texts)
     if UNLOAD_AFTER_INGEST:
-        unload_embed_model()
+        unload_model(EMBED_MODEL)
 
     ensure_collection()
     # Re-adding the same file replaces its old chunks
@@ -235,7 +249,7 @@ def retrieve(question: str, only: list[str] | None = None):
         flt = Filter(must=[FieldCondition(key="source", match=MatchAny(any=only))])
     qvec = embed_query(question)
     if UNLOAD_AFTER_QUERY:
-        unload_embed_model()
+        unload_model(EMBED_MODEL)
     res = qdrant.query_points(
         COLLECTION, query=qvec, limit=TOP_N_CHUNKS, query_filter=flt,
     )
@@ -276,6 +290,15 @@ def print_usage(usage, elapsed: float) -> None:
 
 def stream_reply(messages: list) -> str:
     start = time.time()
+    # Context size is a model-load option, not a chat-completion option.
+    response = httpx.post(
+        f"{BASE_URL}/load",
+        json={"model_name": CHAT_MODEL, "ctx_size": CHAT_CONTEXT_TOKENS},
+        timeout=120,
+    )
+    response.raise_for_status()
+    if response.json().get("status") == "error":
+        raise RuntimeError(f"Could not load {CHAT_MODEL}: {response.json().get('message')}")
     stream = client.chat.completions.create(
         model=CHAT_MODEL,
         messages=messages,
@@ -287,14 +310,15 @@ def stream_reply(messages: list) -> str:
     )
     print("Response: ", end="", flush=True)
     reply, usage = "", None
-    for chunk in stream:
-        if chunk.choices:
-            delta = chunk.choices[0].delta.content
-            if delta:
-                print(delta, end="", flush=True)
-                reply += delta
-        if chunk.usage:
-            usage = chunk.usage
+    with stream:
+        for chunk in stream:
+            if chunk.choices:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    print(delta, end="", flush=True)
+                    reply += delta
+            if chunk.usage:
+                usage = chunk.usage
     print()
     print_usage(usage, time.time() - start)
     print()
@@ -392,8 +416,8 @@ def interactive_loop():
     while True:
         try:
             user_input = ask("Prompt: ").strip()
-        except KeyboardInterrupt:   # Ctrl+C clears the current line
-            continue
+        except KeyboardInterrupt:   # Ctrl+C (including an IDE stop) exits
+            break
         except EOFError:            # Ctrl+D / Ctrl+Z exits
             break
         low = user_input.lower()
@@ -420,11 +444,7 @@ def interactive_loop():
             continue
 
         if low.startswith("/only "):
-            try:
-                names = shlex.split(user_input[6:], posix=False)
-            except ValueError as e:
-                print(f"Could not parse file list: {e}\n")
-                continue
+            names = shlex.split(user_input[6:], posix=False)
             names = [n.strip('"\'') for n in names]
             if not names or (len(names) == 1 and names[0].lower() == "all"):
                 only = None
@@ -438,20 +458,13 @@ def interactive_loop():
             continue
 
         if low.startswith("/add "):
-            try:
-                ingest(user_input[5:])
-            except Exception as e:
-                print(f"Could not add file: {e}\n")
+            ingest(user_input[5:])
             continue
 
         if low.startswith("/file "):
             parts = user_input[6:].split(maxsplit=1)
             question = parts[1] if len(parts) > 1 else "Summarize this document."
-            try:
-                md = convert(resolve_path(parts[0])).export_to_markdown()
-            except Exception as e:
-                print(f"Could not convert file: {e}\n")
-                continue
+            md = convert(resolve_path(parts[0])).export_to_markdown()
             if len(md) > MAX_CHARS:
                 print(f"Warning: {len(md):,} chars, truncating to {MAX_CHARS:,}.")
                 md = md[:MAX_CHARS]
@@ -461,11 +474,7 @@ def interactive_loop():
             continue
 
         # Normal question: retrieve from the library if there is one.
-        try:
-            hits = retrieve(user_input, only)
-        except Exception as e:
-            print(f"[retrieval failed: {e}] answering without documents\n")
-            hits = []
+        hits = retrieve(user_input, only)
 
         if hits:
             srcs = sorted({f"{h.payload['source']} p.{h.payload['page']}" if h.payload.get('page')
@@ -482,5 +491,31 @@ def interactive_loop():
         history.append({"role": "assistant", "content": reply})
 
 
+def stop(signum, frame) -> None:
+    raise SystemExit(128 + signum)
+
+
+def main() -> None:
+    global client, qdrant
+    previous_handlers = {}
+    try:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            previous_handlers[sig] = signal.signal(sig, stop)
+        client = OpenAI(base_url=BASE_URL, api_key=API_KEY)
+        qdrant = QdrantClient(path=QDRANT_PATH)
+        interactive_loop()
+    except KeyboardInterrupt:
+        print("\nStopping...")
+    finally:
+        # Let teardown finish if another soft stop arrives; forced kills cannot be caught.
+        for sig in previous_handlers:
+            signal.signal(sig, signal.SIG_IGN)
+        try:
+            teardown()
+        finally:
+            for sig, handler in previous_handlers.items():
+                signal.signal(sig, handler)
+
+
 if __name__ == "__main__":
-    interactive_loop()
+    main()

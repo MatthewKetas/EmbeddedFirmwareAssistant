@@ -1,0 +1,138 @@
+Answer the question using the context below. Cite sources like [file, p.N]. If the answer isn't in the context, say so.
+
+=== CONTEXT ===
+[Passage A | ESP32.pdf, p.36 | 4.8.2]
+4.8.2 Serial Peripheral Interface (SPI)
+ESP32 integrates four SPI controllers which can be used to communicate with external devices that use the
+SPI protocol. Controller SPI0 is used as a buffer for accessing external memory. Controller SPI1 can be used
+as a master. Controllers SPI2 and SPI3 can be configured as either a master or a slave.
+SPI1, SPI2, and SPI3 use signal buses prefixed with SPI, HSPI, and VSPI, respectively.
+Features of General Purpose SPI (GP-SPI)
+• Programmable data transfer length, in multiples of 1 byte
+• Four-line full-duplex/half-duplex communication and three-line half-duplex communication support
+• Master mode and slave mode
+• Programmable CPOL and CPHA
+• Programmable clock
+For details, see ESP32 Technical Reference Manual > Chapter SPI Controller.
+Pin Assignment
+For SPI, the pins are multiplexed with GPIO6 ~ GPIO11 via the IO MUX. For HSPI, the pins are multiplexed with
+GPIO2, GPIO4, GPIO12 ~ GPIO15 via the IO MUX. For VSPI, the pins are multiplexed with GPIO5, GPIO18 ~
+GPIO19, GPIO21 ~ GPIO23 via the IO MUX.
+For more information about the pin assignment, see Section 4.10 Peripheral Pin Configurations and
+ESP32 Technical Reference Manual > Chapter IO_MUX and GPIO Matrix.
+
+---
+
+[Passage B | ESP32.pdf, p.18 | Table 2-3 and its footnotes]
+Table 2-3. Power Pins
+Pin Pin Power Supply
+No. Name Direction Power Domain / Other IO Pins
+1 VDDA Input Analog power domain
+3 VDD3P3 Input Analog power domain
+4 VDD3P3 Input Analog power domain
+19 VDD3P3_RTC1 Input RTC and part of Digital power domains RTC IO
+26 VDD3P3_SDIO2 Input/Output Analog power domain
+37 VDD3P3_CPU3 Input Digital power domain Digital IO
+43 VDDA Input Analog power domain
+46 VDDA Input Analog power domain
+49 GND – External ground connection
+1 VDD3P3_RTC is also the input power supply for RTC and CPU.
+2 VDD_SDIO connects to the output of an internal LDO whose input is VDD3P3_RTC. When
+VDD_SDIO is connected to the same PCB net together with VDD3P3_RTC, the internal
+LDO is disabled automatically.
+3 VDD3P3_CPU is also the input power supply for CPU.
+
+---
+
+[Passage C | ESP32.pdf, p.14 | Table 2-1, CHIP_PU row; columns: Name / No. / Type / Function]
+High: On; enables the chip
+CHIP_PU 9 I Low: Off; the chip shuts down
+Note: Do not leave the CHIP_PU pin floating.
+
+---
+
+[Passage D | ESP32.pdf, p.19 | 2.5.3, opening paragraph]
+2.5.3 Chip Power-up and Reset
+Once the power is supplied to the chip, its power rails need a short time to stabilize. After that, CHIP_PU – the
+pin used for power-up and reset – is pulled high to activate the chip. For information on CHIP_PU as well as
+power-up and reset timing, see Figure 2-4 and Table 2-4.
+
+---
+
+[Passage E | ESP32.pdf, p.19 | Table 2-4; subscripts flattened with underscores]
+Table 2-4. Description of Timing Parameters for Power-up and Reset
+Parameter | Description | Min (µs)
+t_STBL | Time reserved for the 3.3 V rails to stabilize before the CHIP_PU pin is pulled high to activate the chip | 50
+t_RST | Time reserved for CHIP_PU to stay below V_IL_nRST to reset the chip (see Table 5-3) | 50
+
+---
+
+[Passage F | ESP32.pdf, p.19 | 2.5.3, power-supply notes]
+• In scenarios where ESP32 is powered up and down repeatedly by switching the power rails, while there
+is a large capacitor on the VDD33 rail and CHIP_PU and VDD33 are connected, simply switching off the
+CHIP_PU power rail and immediately switching it back on may cause an incomplete power discharge
+cycle and failure to reset the chip adequately.
+An additional discharge circuit may be required to accelerate the discharge of the large capacitor on rail
+VDD33, which will ensure proper power-on-reset when the ESP32 is powered up again.
+• When a battery is used as the power supply for the ESP32 series of chips and modules, a supply voltage
+supervisor is recommended, so that a boot failure due to low voltage is avoided. Users are
+recommended to pull CHIP_PU low if the power supply for ESP32 is below 2.3 V.
+Notes on power supply:
+• The operating voltage of ESP32 ranges from 2.3 V to 3.6 V. When using a single-power supply, the
+recommended voltage of the power supply is 3.3 V, and its recommended output current is 500 mA or
+more.
+• PSRAM and flash both are powered by VDD_SDIO. If the chip has an in-package flash, the voltage of
+VDD_SDIO is determined by the operating voltage of the in-package flash. If the chip also connects to
+an external PSRAM, the operating voltage of external PSRAM must match that of the in-package flash.
+This also applies if the chip has an in-package PSRAM but also connects to an external flash.
+
+---
+
+[Passage G | ESP32.pdf, p.43 | 4.9.1]
+4.9.1 Analog-to-Digital Converter (ADC)
+ESP32 integrates two 12-bit SAR ADCs and supports measurements on 18 channels (analog-enabled pins).
+The ULP coprocessor in ESP32 is also designed to measure voltage, while operating in the sleep mode, which
+enables low-power consumption. The CPU can be woken up by a threshold setting and/or via other
+triggers.
+
+---
+
+[Passage H | ESP32.pdf, p.20 | 2.5.3, power-supply notes continued]
+• When VDD_SDIO 1.8 V is used as the power supply for external flash/PSRAM, a 2 kΩ grounding resistor
+should be added to VDD_SDIO. For the circuit design, please refer to
+ESP32 Hardware Design Guidelines.
+• When the three digital power supplies are used to drive peripherals, e.g., 3.3 V flash, they should comply
+with the peripherals’ specifications.
+
+---
+
+[Passage I | ESP32.pdf, p.24 | 3.2]
+3.2 Internal LDO (VDD_SDIO) Voltage Control
+The required VDD_SPI voltage for the chips of the ESP32 Series can be found in Table 1-1 Comparison.
+MTDI is used to select the VDD_SDIO power supply voltage at reset:
+• MTDI = 0 (by default), VDD_SDIO pin is powered directly from VDD3P3_RTC. Typically this voltage is 3.3
+V. For more information, see Section 2.5.2 Power Scheme.
+• MTDI = 1, VDD_SDIO pin is powered from internal 1.8 V LDO.
+This functionality can be overridden by setting EFUSE_SDIO_FORCE to 1, in which case the EFUSE_SDIO_TIEH
+determines the VDD_SDIO voltage:
+• EFUSE_SDIO_TIEH = 0, VDD_SDIO connects to 1.8 V LDO.
+• EFUSE_SDIO_TIEH = 1, VDD_SDIO connects to VDD3P3_RTC.
+
+---
+
+[Passage J | ESP32.pdf, p.51 | Table 5-2, notes 1 and 2]
+1. • VDD_SDIO works as the power supply for the related IO, and also for an external device. Please refer to the
+Appendix IO_MUX of this datasheet for more details.
+• VDD_SDIO can be sourced internally by the ESP32 from the VDD3P3_RTC power domain:
+– When VDD_SDIO operates at 3.3 V, it is driven directly by VDD3P3_RTC through a 6 Ω resistor, therefore,
+there will be some voltage drop from VDD3P3_RTC.
+– When VDD_SDIO operates at 1.8 V, it can be generated from ESP32’s internal LDO. The maximum current
+this LDO can offer is 40 mA, and the output voltage range is 1.65 V ~ 2.0 V.
+• VDD_SDIO can also be driven by an external power supply.
+• Please refer to Section 2.5.2 Power Scheme, for more information.
+2. • Chips with a 3.3 V flash or PSRAM in-package: this minimum voltage is 3.0 V;
+• Chips with no flash or PSRAM in-package: this minimum voltage is 2.3 V;
+• For more information, see Section 1 ESP32 Series Comparison.
+=== END CONTEXT ===
+
+Question: You are designing a custom PCB containing an ESP32, 3.3 V flash/PSRAM, and external digital peripherals whose current requirements have not yet been provided. What power-supply voltage and minimum supply capability does the datasheet recommend for the ESP32, and which chip power domains and enable/reset requirements must the design account for? Explain how to choose VDD_SDIO for the memory, including MTDI/eFuse selection and the internal 1.8 V LDO current limit, and how in-package memory changes the minimum supply voltage. Can the ESP32 supply recommendation alone establish the total regulator rating for all peripherals? State which additional peripheral specifications and board-design details are needed. Use only the supplied ESP32 datasheet evidence. Cite the supporting sections or pages, distinguish documented facts from your design inferences, and state what the datasheet does not establish.
