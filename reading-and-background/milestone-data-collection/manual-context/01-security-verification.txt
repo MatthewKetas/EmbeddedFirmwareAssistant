@@ -1,0 +1,41 @@
+Answer the question using the context below. Cite sources like [file, p.N]. If the answer isn't in the context, say so.
+
+=== CONTEXT ===
+[Passage A | ESP32.pdf, p.32 | 4.6.1]
+4.6.1 2.4 GHz Receiver
+The 2.4 GHz receiver demodulates the 2.4 GHz RF signal to quadrature baseband signals and converts them
+to the digital domain with two high-resolution, high-speed ADCs. To adapt to varying signal channel
+conditions, RF filters, Automatic Gain Control (AGC), DC offset cancelation circuits and baseband filters are
+integrated in the chip.
+
+---
+
+[Passage B | ESP32.pdf, p.32 | 4.5]
+4.5 Cryptographic Hardware Accelerators
+ESP32 is equipped with hardware accelerators of general algorithms, such as AES (FIPS PUB 197), SHA (FIPS
+PUB 180-4), and RSA. The chip also supports independent arithmetic, such as large-number modular
+multiplication and large-number multiplication. The maximum operation length for RSA, large-number modular
+multiplication, and large-number multiplication is 4096 bits.
+The hardware accelerators greatly improve operation speed and reduce software complexity. They also
+support code encryption and dynamic decryption, which ensures that code in the flash will not be
+hacked.
+
+---
+
+[Passage C | ESP32.pdf, p.43 | 4.9.1]
+4.9.1 Analog-to-Digital Converter (ADC)
+ESP32 integrates two 12-bit SAR ADCs and supports measurements on 18 channels (analog-enabled pins).
+The ULP coprocessor in ESP32 is also designed to measure voltage, while operating in the sleep mode, which
+enables low-power consumption. The CPU can be woken up by a threshold setting and/or via other
+triggers.
+
+---
+
+[Passage D | ESP32.pdf, p.29 | 4.1.5]
+4.1.5 Cache
+ESP32 uses a two-way set-associative cache. Each of the two CPUs has 32 KB of cache featuring a block
+size of 32 bytes for accessing external storage.
+For details, see ESP32 Technical Reference Manual > Chapter System and Memory > Section Cache.
+=== END CONTEXT ===
+
+Question: An ESP32 controls an autonomous line-following robot and must authenticate an external server before transmitting telemetry. The proposed verification workload includes RSA-3072 signature verification and SHA-256 hashing while the CPU is also running the robot control loop. Which onboard resources are relevant to reducing the computation performed in software, what supported operation-size limit matters, and why? Does the presence of these resources alone establish that the server is trustworthy, and what authentication details are missing from the datasheet? Use only the supplied ESP32 datasheet evidence. Cite the supporting sections or pages, distinguish documented facts from your design inferences, and state what the datasheet does not establish.

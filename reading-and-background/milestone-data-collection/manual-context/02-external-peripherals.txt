@@ -1,0 +1,110 @@
+Answer the question using the context below. Cite sources like [file, p.N]. If the answer isn't in the context, say so.
+
+=== CONTEXT ===
+[Passage A | ESP32.pdf, p.32 | 4.5]
+4.5 Cryptographic Hardware Accelerators
+ESP32 is equipped with hardware accelerators of general algorithms, such as AES (FIPS PUB 197), SHA (FIPS
+PUB 180-4), and RSA. The chip also supports independent arithmetic, such as large-number modular
+multiplication and large-number multiplication. The maximum operation length for RSA, large-number modular
+multiplication, and large-number multiplication is 4096 bits.
+The hardware accelerators greatly improve operation speed and reduce software complexity. They also
+support code encryption and dynamic decryption, which ensures that code in the flash will not be
+hacked.
+
+---
+
+[Passage B | ESP32.pdf, p.36 | 4.8.2]
+4.8.2 Serial Peripheral Interface (SPI)
+ESP32 integrates four SPI controllers which can be used to communicate with external devices that use the
+SPI protocol. Controller SPI0 is used as a buffer for accessing external memory. Controller SPI1 can be used
+as a master. Controllers SPI2 and SPI3 can be configured as either a master or a slave.
+SPI1, SPI2, and SPI3 use signal buses prefixed with SPI, HSPI, and VSPI, respectively.
+Features of General Purpose SPI (GP-SPI)
+• Programmable data transfer length, in multiples of 1 byte
+• Four-line full-duplex/half-duplex communication and three-line half-duplex communication support
+• Master mode and slave mode
+• Programmable CPOL and CPHA
+• Programmable clock
+For details, see ESP32 Technical Reference Manual > Chapter SPI Controller.
+Pin Assignment
+For SPI, the pins are multiplexed with GPIO6 ~ GPIO11 via the IO MUX. For HSPI, the pins are multiplexed with
+GPIO2, GPIO4, GPIO12 ~ GPIO15 via the IO MUX. For VSPI, the pins are multiplexed with GPIO5, GPIO18 ~
+GPIO19, GPIO21 ~ GPIO23 via the IO MUX.
+For more information about the pin assignment, see Section 4.10 Peripheral Pin Configurations and
+ESP32 Technical Reference Manual > Chapter IO_MUX and GPIO Matrix.
+
+---
+
+[Passage C | ESP32.pdf, p.36 | 4.8.3]
+4.8.3 Universal Asynchronous Receiver Transmitter (UART)
+ESP32 has three UART interfaces that facilitate the transmission and reception of asynchronous serial data
+between the chip and external UART devices.
+
+---
+
+[Passage D | ESP32.pdf, p.37 | 4.8.3, continued]
+Feature List
+• Programmable baud rates up to 5 MBaud
+• RAM shared by TX FIFOs and RX FIFOs
+• Supports input baud rate self-check
+• Support for various lengths of data bits and stop bits
+• Parity bit support
+• Asynchronous communication (RS232 and RS485) and IrDA support
+• Supports DMA to communicate data in high speed
+• Supports UART wake-up
+• Supports both software and hardware flow control
+For details, see ESP32 Technical Reference Manual > Chapter UART Controller.
+Pin Assignment
+The pins for UART can be chosen from any GPIOs via the GPIO Matrix.
+For more information about the pin assignment, see Section 4.10 Peripheral Pin Configurations and
+ESP32 Technical Reference Manual > Chapter IO_MUX and GPIO Matrix.
+
+---
+
+[Passage E | ESP32.pdf, p.29 | 4.1.5]
+4.1.5 Cache
+ESP32 uses a two-way set-associative cache. Each of the two CPUs has 32 KB of cache featuring a block
+size of 32 bytes for accessing external storage.
+For details, see ESP32 Technical Reference Manual > Chapter System and Memory > Section Cache.
+
+---
+
+[Passage F | ESP32.pdf, p.37 | 4.8.4]
+4.8.4 I2C Interface
+ESP32 has two I2C bus interfaces which can serve as I2C master or slave, depending on the user’s
+configuration.
+Feature List
+• Standard mode (100 Kbit/s)
+• Fast mode (400 Kbit/s)
+• Up to 5 MHz, yet constrained by SDA pull-up strength
+• Support for 7-bit and 10-bit addressing, as well as dual address mode
+• Supports continuous data transmission with disabled Serial Clock Line (SCL)
+• Supports programmable digital noise filter
+Users can program command registers to control I2C interfaces, so that they have more flexibility.
+For details, see ESP32 Technical Reference Manual > Chapter I2C Controller.
+Pin Assignment
+For regular I2C, the pins used can be chosen from any GPIOs via the GPIO Matrix.
+For more information about the pin assignment, see Section 4.10 Peripheral Pin Configurations and
+ESP32 Technical Reference Manual > Chapter IO_MUX and GPIO Matrix.
+
+---
+
+[Passage G | ESP32.pdf, p.17 | 2.3.1]
+2.3 IO Pins
+2.3.1 Restrictions for GPIOs and RTC_GPIOs
+All IO pins of the ESP32 have GPIO and some have RTC_GPIO pin functions. However, these IO pins are
+multifunctional and can be configured for different purposes based on the requirements. Some IOs have
+restrictions for usage. It is essential to consider their multiplexed nature and the limitations when using these
+IO pins.
+In Table 2-1 Pin Overview some pin functions are highlighted, specically:
+• GPIO – Input only pins, output is not supported due to lack of pull-up/pull-down resistors.
+• GPIO – allocated for communication with in-package flash/PSRAM and NOT recommended for other
+uses. For details, see Section 2.6 Pin Mapping Between Chip and Flash/PSRAM.
+• GPIO – have one of the following important functions:
+– Strapping pins – need to be at certain logic levels at startup. See Section 3 Boot Configurations.
+– JTAG interface – often used for debugging.
+– UART interface – often used for debugging.
+See also Appendix A.1 – Notes on ESP32 Pin Lists.
+=== END CONTEXT ===
+
+Question: A custom ESP32 board must connect two digital sensors that support a shared 400 Kbit/s I2C bus with distinct addresses, a display that accepts SPI with the ESP32 acting as master, and a telemetry module that uses asynchronous UART at 115200 baud. Which ESP32 interfaces and controller roles best match these requirements? Explain the relevant interface capabilities and pin-routing options, and the restrictions needed to avoid conflicts with flash/PSRAM, input-only pins, and boot-strapping pins. Identify anything the datasheet does not specify well enough to finalize the wiring. Use only the supplied ESP32 datasheet evidence. Cite the supporting sections or pages, distinguish documented facts from your design inferences, and state what the datasheet does not establish.
