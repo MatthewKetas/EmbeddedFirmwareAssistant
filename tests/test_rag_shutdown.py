@@ -36,6 +36,12 @@ class ShutdownTests(unittest.TestCase):
             rag.main()
         self.assert_cleaned_up()
 
+    def test_prompt_reads_nonterminal_input(self):
+        with patch("sys.stdin", io.StringIO("/board\n")), patch("sys.stdout.isatty", return_value=True):
+            ask = rag.make_prompt()
+            self.assertIs(ask, input)
+            self.assertEqual(ask("Prompt: "), "/board")
+
     def test_multiple_replies_keep_session_open_until_quit(self):
         commands = iter(["first question", "second question", "/quit"])
 
