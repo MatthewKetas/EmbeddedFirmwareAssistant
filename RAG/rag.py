@@ -3,6 +3,7 @@ import importlib.util
 import os
 import shlex
 import signal
+import sys
 import time
 import uuid
 from functools import cache
@@ -470,14 +471,16 @@ HELP = (
     "  /board [id|none]         list or select boards, or clear selection\n"
     "  /remember key=value     save or update a fact for the selected board\n"
     "  /quit                    exit\n"
-    "Press Tab to complete commands and file names; Up/Down for previous prompts.\n"
 )
 
 COMMANDS = ["/add", "/file", "/list", "/only", "/clear", "/wipe", "/quit", "/code", "/board", "/remember"]
 
 
 def make_prompt():
-    """Return a prompt function with Tab completion, or plain input() if prompt_toolkit is missing."""
+    """Use terminal editing when available, with plain input as a fallback."""
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return input
+
     try:
         from prompt_toolkit import PromptSession
         from prompt_toolkit.completion import Completer, Completion, PathCompleter
@@ -540,6 +543,7 @@ def make_prompt():
         complete_while_typing=False,   # menu only appears when you press Tab
         history=FileHistory(str(HISTORY_FILE)),
     )
+    print("Press Tab to complete commands and file names. Use Up/Down for previous prompts.\n")
     return session.prompt
 
 
