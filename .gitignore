@@ -65,6 +65,9 @@ db.sqlite3-journal
 /knowledge-map/knowledge.sql
 /knowledge-map/knowledge.sql-*
 
+# Local Qdrant index and runtime files
+/RAG/qdrant_data/
+
 # Flask stuff:
 instance/
 .webassets-cache
