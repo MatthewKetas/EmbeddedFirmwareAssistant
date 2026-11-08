@@ -1,0 +1,11 @@
+esp32.svd comes from Espressif's SVD repository (Apache-2.0).
+https://github.com/espressif/svd/blob/104da3c8e28a3c3a088c68a5ad1d31272b3d43ef/svd/esp32.svd
+
+atmega328p.svd comes from dw-gdbserver (MIT), upstream blob
+30442e0b3768a6427b36a1b6f46c779783acb026. Its base addresses were converted
+from GDB's AVR address space to the AVR data-space addresses.
+https://github.com/felias-fogg/dw-gdbserver/blob/main/svd/atmega328p.svd
+
+The ATmega328P register data is derived from Microchip's ATDF.
+Copyright (c) 2018 Microchip Technology Inc. (Apache-2.0).
+https://github.com/Rahix/avr-device/blob/main/vendor/LICENSE
