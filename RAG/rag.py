@@ -5,6 +5,8 @@ import shlex
 import signal
 import time
 import uuid
+from functools import cache
+from itertools import chain, islice
 from pathlib import Path
 
 import httpx
@@ -16,6 +18,11 @@ from qdrant_client.models import (
 
 # Library, cache and history live next to this script, wherever you launch it from.
 SCRIPT_DIR = Path(__file__).resolve().parent
+_board_map_spec = importlib.util.spec_from_file_location(
+    "board_map", SCRIPT_DIR.parent / "knowledge-map" / "board_map.py",
+)
+board_map = importlib.util.module_from_spec(_board_map_spec)
+_board_map_spec.loader.exec_module(board_map)
 
 # Folder that /add and /file look in for bare names like "ESP32.pdf".
 # Uses a "datasheets" folder next to this script if there is one, otherwise the one beside
@@ -30,6 +37,9 @@ BASE_URL = "http://localhost:13305/api/v1"
 API_KEY = "lemonade"                        # ignored by Lemonade
 CHAT_MODEL = "Qwen3.6-35B-A3B-GGUF"
 CHAT_CONTEXT_TOKENS = 16_384                # room for retrieved passages, history and the reply
+CHAT_TOKENIZER = "Qwen/Qwen3.6-35B-A3B"
+RAG_CONTEXT_TOKENS = 4_000                  # retrieved context on turns with code
+RAG_REPLY_TOKENS = 2_048                    # space reserved for generation
 # Must match the name Lemonade lists for your embedding model (check /api/v1/models)
 EMBED_MODEL = "Qwen3-Embedding-8B-GGUF"
 EMBED_DIM = 4096                            # Qwen3-Embedding-8B output size
@@ -171,15 +181,20 @@ def convert(path: Path):
     return doc
 
 
+@cache
+def get_tokenizer(name: str):
+    from transformers import AutoTokenizer
+    return AutoTokenizer.from_pretrained(name)
+
+
 def get_chunker():
     global _chunker
     if _chunker is None:
         from docling.chunking import HybridChunker
         try:
             from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
-            from transformers import AutoTokenizer
             tok = HuggingFaceTokenizer(
-                tokenizer=AutoTokenizer.from_pretrained(CHUNK_TOKENIZER),
+                tokenizer=get_tokenizer(CHUNK_TOKENIZER),
                 max_tokens=CHUNK_TOKENS,
             )
             _chunker = HybridChunker(tokenizer=tok, merge_peers=True)
@@ -241,6 +256,96 @@ def ingest(path_str: str) -> None:
     print(f"Indexed {len(points)} chunks from {path.name}\n")
 
 
+def code_chunks(repo: Path):
+    try:
+        import tree_sitter_c
+        from tree_sitter import Language, Parser
+    except ImportError as e:
+        raise RuntimeError("Install C parsing with: pip install tree-sitter tree-sitter-c") from e
+
+    parser = Parser(Language(tree_sitter_c.language()))
+    tokenizer = get_tokenizer(CHUNK_TOKENIZER)
+
+    def raise_walk_error(error):
+        raise error
+
+    for directory, dirs, files in os.walk(repo, onerror=raise_walk_error):
+        dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d != "build")
+        for name in sorted(files):
+            path = Path(directory) / name
+            if path.suffix.lower() not in {".c", ".h"} or path.is_symlink() or not path.is_file():
+                continue
+            source = path.read_bytes()
+            boundaries = [0]
+            for node in parser.parse(source).root_node.named_children:
+                if node.type in {"function_definition", "preproc_if", "preproc_ifdef"}:
+                    boundaries.extend((node.start_byte, node.end_byte))
+            boundaries.append(len(source))
+
+            line = 1
+            for start, end in zip(boundaries, boundaries[1:]):
+                text = source[start:end].decode("utf-8", errors="replace")
+                if not text.strip():
+                    line += text.count("\n")
+                    continue
+                offsets = tokenizer(text, add_special_tokens=False, return_offsets_mapping=True,
+                                    verbose=False)["offset_mapping"]
+                start = 0
+                for end in chain((a for a, _ in offsets[CHUNK_TOKENS::CHUNK_TOKENS]), (len(text),)):
+                    part = text[start:end]
+                    snippet = part.strip("\r\n")
+                    if snippet.strip():
+                        leading = part[:len(part) - len(part.lstrip("\r\n"))].count("\n")
+                        yield {
+                            "file": path.relative_to(repo).as_posix(),
+                            "start_line": line + leading,
+                            "end_line": line + leading + snippet.count("\n"),
+                            "text": snippet,
+                        }
+                    line += part.count("\n")
+                    start = end
+
+
+def ingest_code(path_str: str) -> str:
+    repo = Path(path_str.strip("\"'")).expanduser().resolve(strict=True)
+    if not repo.is_dir():
+        raise NotADirectoryError(f"Expected a repository directory: {repo}")
+    source = str(repo)
+    revision = uuid.uuid4()
+    repo_match = FieldCondition(key="source", match=MatchValue(value=source))
+    revision_match = FieldCondition(key="revision", match=MatchValue(value=str(revision)))
+    chunks = code_chunks(repo)
+    count = 0
+    ensure_collection()
+    try:
+        while batch := list(islice(chunks, EMBED_BATCH)):
+            vectors = embed([f"{p['file']}\n{p['text']}" for p in batch])
+            points = [
+                PointStruct(
+                    id=str(uuid.uuid5(revision, str(i))),
+                    vector=vector,
+                    payload={**payload, "source": source, "revision": str(revision)},
+                )
+                for i, (payload, vector) in enumerate(zip(batch, vectors, strict=True), count)
+            ]
+            qdrant.upsert(COLLECTION, points=points)
+            count += len(points)
+    except BaseException:
+        # A failed refresh should leave the previous index usable.
+        try:
+            qdrant.delete(COLLECTION, points_selector=Filter(must=[repo_match, revision_match]))
+        except Exception as e:
+            print(f"[could not remove partial code index: {e}]")
+        raise
+    finally:
+        if count and UNLOAD_AFTER_INGEST:
+            unload_model(EMBED_MODEL)
+
+    qdrant.delete(COLLECTION, points_selector=Filter(must=[repo_match], must_not=[revision_match]))
+    print(f"Indexed {count} code chunks from {source}\n")
+    return source
+
+
 def retrieve(question: str, only: list[str] | None = None):
     if not qdrant.collection_exists(COLLECTION) or qdrant.count(COLLECTION).count == 0:
         return []
@@ -263,18 +368,46 @@ def list_sources() -> list[str]:
     return sorted({p.payload["source"] for p in pts})
 
 
-def build_rag_prompt(question: str, hits) -> str:
-    parts = []
-    for h in hits:
-        page = f", p.{h.payload['page']}" if h.payload.get("page") else ""
-        parts.append(f"[{h.payload['source']}{page}]\n{h.payload['text']}")
+def source_label(payload) -> str:
+    if "file" in payload:
+        repo = Path(payload["source"]).name
+        return f"{repo}/{payload['file']}:{payload['start_line']}-{payload['end_line']}"
+    page = f", p.{payload['page']}" if payload.get("page") else ""
+    return f"{payload['source']}{page}"
+
+
+def build_rag_prompt(question: str, hits, board_context: str = "") -> str:
+    parts = [f"[{source_label(h.payload)}]\n{h.payload['text']}" for h in hits]
+    if board_context:
+        parts.insert(0, board_context)
     context = "\n\n---\n\n".join(parts)
+    citation = "[repo/file:start-end] for code or [file, p.N] for documents" if any(
+        "file" in h.payload for h in hits
+    ) else "[file, p.N]"
+    if board_context:
+        citation += ", [remember:key] for saved facts, or [file.svd] for device data"
     return (
-        "Answer the question using the context below. Cite sources like [file, p.N]. "
+        f"Answer the question using the context below. Cite sources like {citation}. "
         "If the answer isn't in the context, say so.\n\n"
         f"=== CONTEXT ===\n{context}\n=== END CONTEXT ===\n\n"
         f"Question: {question}"
     )
+
+
+def fit_code_context(question: str, hits, history: list, board_context: str = ""):
+    tokenizer = get_tokenizer(CHAT_TOKENIZER)
+
+    def prompt_tokens(selected):
+        messages = history + [{"role": "user", "content": build_rag_prompt(question, selected, board_context)}]
+        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        return len(tokenizer.encode(text, add_special_tokens=False, verbose=False))
+
+    limit = min(prompt_tokens([]) + RAG_CONTEXT_TOKENS, CHAT_CONTEXT_TOKENS - RAG_REPLY_TOKENS)
+    selected = []
+    for hit in hits:
+        if prompt_tokens(selected + [hit]) <= limit:
+            selected.append(hit)
+    return selected
 
 
 def print_usage(usage, elapsed: float) -> None:
@@ -332,12 +465,15 @@ HELP = (
     "  /list                    show indexed files\n"
     "  /only <f1> [f2 ...]|all  restrict retrieval to one or more files (quote names with spaces)\n"
     "  /clear                   reset the chat (library is kept)\n"
-    "  /wipe                    delete the whole library\n"
+    "  /wipe                    delete the indexed documents and code\n"
+    "  /code <directory>       index and select a C repository\n"
+    "  /board [id|none]         list or select boards, or clear selection\n"
+    "  /remember key=value     save or update a fact for the selected board\n"
     "  /quit                    exit\n"
     "Press Tab to complete commands and file names; Up/Down for previous prompts.\n"
 )
 
-COMMANDS = ["/add", "/file", "/list", "/only", "/clear", "/wipe", "/quit"]
+COMMANDS = ["/add", "/file", "/list", "/only", "/clear", "/wipe", "/quit", "/code", "/board", "/remember"]
 
 
 def make_prompt():
@@ -355,6 +491,7 @@ def make_prompt():
         def __init__(self):
             # Relative paths complete against the datasheets folder; absolute paths and ~ also work.
             self.paths = PathCompleter(get_paths=lambda: [str(DOCS_DIR)], expanduser=True)
+            self.repos = PathCompleter(only_directories=True, expanduser=True)
 
         def _complete_path(self, text, event):
             yield from self.paths.get_completions(Document(text, len(text)), event)
@@ -376,6 +513,9 @@ def make_prompt():
             if cmd == "/add":
                 # The whole rest of the line is the path, so names with spaces are fine.
                 yield from self._complete_path(rest, complete_event)
+
+            elif cmd == "/code":
+                yield from self.repos.get_completions(Document(rest, len(rest)), complete_event)
 
             elif cmd == "/file":
                 # Only the first word is the path; after it comes the question.
@@ -412,6 +552,7 @@ def interactive_loop():
     ask = make_prompt()
     history: list[dict] = []
     only: list[str] | None = None
+    board_id = None
 
     while True:
         try:
@@ -429,6 +570,17 @@ def interactive_loop():
         if low in ("/clear", "/new", "/reset"):
             history = []
             print("Chat cleared.\n")
+            continue
+
+        command, _, arg = user_input.partition(" ")
+        if command.lower() == "/board":
+            selected = board_map.select_board(arg.strip().lower(), board_id)
+            if selected != board_id:
+                history = []
+                board_id = selected
+            continue
+        if command.lower() == "/remember":
+            board_map.remember(board_id, arg)
             continue
 
         if low == "/list":
@@ -461,6 +613,15 @@ def interactive_loop():
             ingest(user_input[5:])
             continue
 
+        if low == "/code":
+            print("Usage: /code <directory>\n")
+            continue
+
+        if low.startswith("/code "):
+            only = [ingest_code(user_input[6:])]
+            print(f"Retrieval scope: {only[0]}\n")
+            continue
+
         if low.startswith("/file "):
             parts = user_input[6:].split(maxsplit=1)
             question = parts[1] if len(parts) > 1 else "Summarize this document."
@@ -474,19 +635,24 @@ def interactive_loop():
             continue
 
         # Normal question: retrieve from the library if there is one.
+        board_context = board_map.context(board_id, user_input) if board_id else ""
         hits = retrieve(user_input, only)
+        if any("file" in h.payload for h in hits):
+            hits = fit_code_context(user_input, hits, history, board_context)
+            if not hits:
+                print("[No retrieved snippets fit the context budget.]")
 
         if hits:
-            srcs = sorted({f"{h.payload['source']} p.{h.payload['page']}" if h.payload.get('page')
-                           else h.payload['source'] for h in hits})
+            srcs = sorted({source_label(h.payload) for h in hits})
             print(f"[retrieved {len(hits)} chunks: {', '.join(srcs)}]")
+        if hits or board_context:
             # Retrieved context goes to the model for this turn only; history keeps the
             # plain question so old chunks don't fill the context.
-            messages = history + [{"role": "user", "content": build_rag_prompt(user_input, hits)}]
+            content = build_rag_prompt(user_input, hits, board_context)
         else:
-            messages = history + [{"role": "user", "content": user_input}]
+            content = user_input
 
-        reply = stream_reply(messages)
+        reply = stream_reply(history + [{"role": "user", "content": content}])
         history.append({"role": "user", "content": user_input})
         history.append({"role": "assistant", "content": reply})
 
