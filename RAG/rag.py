@@ -426,8 +426,7 @@ def print_usage(usage, elapsed: float) -> None:
     )
 
 
-def stream_reply(messages: list) -> str:
-    start = time.time()
+def open_chat_stream(messages: list):
     # Context size is a model-load option, not a chat-completion option.
     response = httpx.post(
         f"{BASE_URL}/load",
@@ -437,7 +436,7 @@ def stream_reply(messages: list) -> str:
     response.raise_for_status()
     if response.json().get("status") == "error":
         raise RuntimeError(f"Could not load {CHAT_MODEL}: {response.json().get('message')}")
-    stream = client.chat.completions.create(
+    return client.chat.completions.create(
         model=CHAT_MODEL,
         messages=messages,
         temperature=TEMPERATURE,
@@ -446,6 +445,11 @@ def stream_reply(messages: list) -> str:
         stream=True,
         stream_options={"include_usage": True},
     )
+
+
+def stream_reply(messages: list) -> str:
+    start = time.time()
+    stream = open_chat_stream(messages)
     print("Response: ", end="", flush=True)
     reply, usage = "", None
     with stream:

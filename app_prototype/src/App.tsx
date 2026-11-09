@@ -1,345 +1,163 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { ChatArea } from './components/ChatArea';
 import { MessageInput } from './components/MessageInput';
-import { CitedDocsDrawer } from './components/CitedDocsDrawer';
-import { SvdInspectorModal } from './components/SvdInspectorModal';
-import { PythonBackendModal } from './components/PythonBackendModal';
-import { SettingsModal } from './components/SettingsModal';
-import { INITIAL_WORKSPACES, INITIAL_MODELS } from './data/mockHardwareData';
-import { HardwareWorkspace, ChatSession, ChatMessage, CitedDoc, PythonBackendStatus } from './types/hardware';
-import { pythonBridge } from './services/pythonBackendBridge';
+import { loadBoards, loadModel, streamChat, uploadBoard } from './services/firmwareApi';
+import type { Board, ChatMessage, Project, ProjectChat } from './types/hardware';
+
+function newChat(): ProjectChat {
+  return { id: crypto.randomUUID(), title: 'New chat', messages: [] };
+}
+
+function newProject(name: string, boardId: string): Project {
+  const chat = newChat();
+  return { id: crypto.randomUUID(), name, boardId, activeChatId: chat.id, chats: [chat] };
+}
+
+function message(sender: ChatMessage['sender'], content: string): ChatMessage {
+  return {
+    id: crypto.randomUUID(),
+    sender,
+    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    content,
+  };
+}
 
 export default function App() {
-  const [workspaces, setWorkspaces] = useState<HardwareWorkspace[]>(INITIAL_WORKSPACES);
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>('stm32h7');
-  const [activeSessionId, setActiveSessionId] = useState<string>('session-ltdc-dma2d');
-  
-  const [models, setModels] = useState(INITIAL_MODELS);
-  const [selectedModel, setSelectedModel] = useState<string>('qwen2.5-coder:32b');
-  
+  const [boards, setBoards] = useState<Board[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [streamingContent, setStreamingContent] = useState('');
-  
-  // Modals & Drawers
-  const [citedDocsOpen, setCitedDocsOpen] = useState(false);
-  const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
-  const [svdModalOpen, setSvdModalOpen] = useState(false);
-  const [selectedRegisterToInspect, setSelectedRegisterToInspect] = useState<string | null>(null);
-  const [pythonModalOpen, setPythonModalOpen] = useState(false);
-  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
-  
-  const [pythonStatus, setPythonStatus] = useState<PythonBackendStatus>(pythonBridge.getStatus());
+  const [model, setModel] = useState('');
+  const [setupError, setSetupError] = useState('');
+  const [boardError, setBoardError] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [reply, setReply] = useState<{ chatId: string; text: string } | null>(null);
 
-  // Refresh backend status
-  const refreshPythonStatus = useCallback(() => {
-    setPythonStatus(pythonBridge.getStatus());
-  }, []);
+  const project = projects.find(item => item.id === activeProjectId);
+  const board = boards.find(item => item.id === project?.boardId);
+  const chat = project?.chats.find(item => item.id === project.activeChatId);
 
-  useEffect(() => {
-    // Initial backend ping
-    pythonBridge.checkHealth().then(() => {
-      refreshPythonStatus();
-    });
-  }, [refreshPythonStatus]);
-
-  // Current active workspace and session
-  const currentWorkspace = workspaces.find(w => w.id === activeWorkspaceId) || workspaces[0];
-  const currentSession = currentWorkspace.sessions.find(s => s.id === activeSessionId) || currentWorkspace.sessions[0];
-
-  // Aggregate all citations in current session for the "3 Cited Docs" counter
-  const allCitations: CitedDoc[] = React.useMemo(() => {
-    const list: CitedDoc[] = [];
-    currentSession?.messages.forEach(m => {
-      if (m.citations) {
-        m.citations.forEach(c => {
-          if (!list.some(existing => existing.docCode === c.docCode)) {
-            list.push(c);
-          }
-        });
-      }
-    });
-    return list;
-  }, [currentSession]);
-
-  // Keyboard shortcuts (Cmd+N, Cmd+B, Escape)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') {
-        e.preventDefault();
-        handleNewChat();
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
-        e.preventDefault();
-        setSidebarOpen(prev => !prev);
-      } else if (e.key === 'Escape') {
-        setCitedDocsOpen(false);
-        setSvdModalOpen(false);
-        setPythonModalOpen(false);
-        setSettingsModalOpen(false);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeWorkspaceId]);
-
-  const handleSelectSession = (sessionId: string, workspaceId: string) => {
-    setActiveWorkspaceId(workspaceId);
-    setActiveSessionId(sessionId);
-  };
-
-  const handleNewChat = () => {
-    const newSessionId = `session-${Date.now()}`;
-    const newSession: ChatSession = {
-      id: newSessionId,
-      title: 'New Hardware Session',
-      workspaceId: activeWorkspaceId,
-      targetMcu: currentWorkspace.name.split('/')[0].trim(),
-      timestamp: 'Just now',
-      messages: []
-    };
-
-    setWorkspaces(prev =>
-      prev.map(ws => {
-        if (ws.id === activeWorkspaceId) {
-          return {
-            ...ws,
-            sessions: [newSession, ...ws.sessions]
-          };
-        }
-        return ws;
-      })
-    );
-
-    setActiveSessionId(newSessionId);
-  };
-
-  const handleSendMessage = (text: string, _attachments: string[]) => {
-    if (!text.trim() || isStreaming) return;
-
-    const userMsg: ChatMessage = {
-      id: `msg-user-${Date.now()}`,
-      sender: 'user',
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      content: text
-    };
-
-    // Update session with user message
-    setWorkspaces(prev =>
-      prev.map(ws => {
-        if (ws.id === activeWorkspaceId) {
-          return {
-            ...ws,
-            sessions: ws.sessions.map(s => {
-              if (s.id === activeSessionId) {
-                return {
-                  ...s,
-                  title: s.messages.length === 0 ? (text.slice(0, 24) + '...') : s.title,
-                  messages: [...s.messages, userMsg]
-                };
-              }
-              return s;
-            })
-          };
-        }
-        return ws;
-      })
-    );
-
-    setIsStreaming(true);
-    setStreamingContent('');
-
-    // Stream from Python bridge or local simulator
-    pythonBridge.streamChat(
-      text,
-      currentSession.messages,
-      currentSession.targetMcu,
-      selectedModel,
-      (chunk) => {
-        setStreamingContent(prev => prev + chunk);
-      },
-      (assistantMsgPartial) => {
-        setIsStreaming(false);
-        setStreamingContent('');
-
-        const assistantMsg: ChatMessage = {
-          id: `msg-asst-${Date.now()}`,
-          sender: 'assistant',
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          content: assistantMsgPartial.content || '',
-          citations: assistantMsgPartial.citations,
-          codeSnippets: assistantMsgPartial.codeSnippets,
-          registerBreakdown: assistantMsgPartial.registerBreakdown
-        };
-
-        setWorkspaces(prev =>
-          prev.map(ws => {
-            if (ws.id === activeWorkspaceId) {
-              return {
-                ...ws,
-                sessions: ws.sessions.map(s => {
-                  if (s.id === activeSessionId) {
-                    return {
-                      ...s,
-                      messages: [...s.messages, assistantMsg]
-                    };
-                  }
-                  return s;
-                })
-              };
-            }
-            return ws;
-          })
-        );
-      },
-      (err) => {
-        console.error('Chat stream error:', err);
-        setIsStreaming(false);
-      }
-    );
-  };
-
-  const handleOpenCitedDoc = (doc: CitedDoc) => {
-    setSelectedDocId(doc.id);
-    setCitedDocsOpen(true);
-  };
-
-  const handleInspectRegister = (regName: string) => {
-    setSelectedRegisterToInspect(regName);
-    setSvdModalOpen(true);
-  };
-
-  const handleRegenerate = () => {
-    const lastUserMsg = [...currentSession.messages].reverse().find(m => m.sender === 'user');
-    if (lastUserMsg) {
-      handleSendMessage(lastUserMsg.content, []);
+  async function connect() {
+    setSetupError('');
+    try {
+      const [availableBoards, activeModel] = await Promise.all([loadBoards(), loadModel()]);
+      const starterProjects = availableBoards.map(item => newProject(item.name, item.id));
+      setBoards(availableBoards);
+      setProjects(starterProjects);
+      setActiveProjectId(starterProjects[0]?.id ?? '');
+      setModel(activeModel);
+    } catch (error) {
+      setSetupError((error as Error).message);
     }
-  };
-
-  const handleExportSession = () => {
-    const mdContent = `# Hardware Copilot Session: ${currentSession.title}
-Target MCU: ${currentSession.targetMcu}
-Workspace: ${currentWorkspace.name}
-Export Date: ${new Date().toLocaleString()}
-
-${currentSession.messages.map(m => {
-  const author = m.sender === 'user' ? '### Engineer' : '### Hardware Copilot';
-  let body = `${author} (${m.timestamp})\n\n${m.content}\n`;
-  if (m.codeSnippets && m.codeSnippets.length > 0) {
-    m.codeSnippets.forEach(cs => {
-      body += `\n\`\`\`${cs.language} // ${cs.filename}\n${cs.code}\n\`\`\`\n`;
-    });
   }
-  return body;
-}).join('\n---\n\n')}`;
 
-    const blob = new Blob([mdContent], { type: 'text/markdown;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${currentSession.title.toLowerCase().replace(/[^a-z0-9]/g, '_')}.md`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
+  useEffect(() => { void connect(); }, []);
+
+  function updateProject(id: string, update: (project: Project) => Project) {
+    setProjects(current => current.map(item => item.id === id ? update(item) : item));
+  }
+
+  function createProject(name: string, boardId: string) {
+    const item = newProject(name, boardId);
+    setProjects(current => [...current, item]);
+    setActiveProjectId(item.id);
+  }
+
+  function createChat() {
+    if (!project) return;
+    const item = newChat();
+    updateProject(project.id, current => ({
+      ...current, activeChatId: item.id, chats: [item, ...current.chats],
+    }));
+  }
+
+  function selectChat(projectId: string, chatId: string) {
+    setActiveProjectId(projectId);
+    updateProject(projectId, current => ({ ...current, activeChatId: chatId }));
+  }
+
+  async function importBoard(file: File) {
+    setBoardError('');
+    setUploading(true);
+    try {
+      const imported = await uploadBoard(file);
+      setBoards(current => current.some(item => item.id === imported.id) ? current : [...current, imported]);
+      const existingProject = projects.find(item => item.boardId === imported.id);
+      if (existingProject) setActiveProjectId(existingProject.id);
+      else createProject(imported.name, imported.id);
+    } catch (error) {
+      setBoardError((error as Error).message);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function send(text: string) {
+    if (!project || !chat || reply) return;
+    const projectId = project.id;
+    const chatId = chat.id;
+
+    function updateChat(update: (current: ProjectChat) => ProjectChat) {
+      updateProject(projectId, current => ({
+        ...current, chats: current.chats.map(item => item.id === chatId ? update(item) : item),
+      }));
+    }
+
+    const userMessage = message('user', text);
+    updateChat(current => ({
+      ...current,
+      title: current.messages.length ? current.title : text.slice(0, 45),
+      messages: [...current.messages, userMessage],
+      error: undefined,
+    }));
+    setReply({ chatId, text: '' });
+
+    let answer = '';
+    try {
+      await streamChat(project.boardId, text, chat.messages, chunk => {
+        answer += chunk;
+        setReply({ chatId, text: answer });
+      });
+      if (!answer.trim()) throw new Error('The local model returned an empty reply.');
+      const assistantMessage = message('assistant', answer);
+      updateChat(current => ({ ...current, messages: [...current.messages, assistantMessage] }));
+    } catch (error) {
+      updateChat(current => ({ ...current, error: (error as Error).message }));
+    } finally {
+      setReply(null);
+    }
+  }
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-[#0b0f14] text-slate-100 overflow-hidden font-sans">
-      {/* Top Header Bar */}
-      <Header
-        sessionTitle={currentSession?.title || 'DMA2D & LTDC Register Config'}
-        targetMcu={currentSession?.targetMcu || 'STM32H743ZI'}
-        citedDocsCount={allCitations.length || 3}
-        sidebarOpen={sidebarOpen}
-        onToggleSidebar={() => setSidebarOpen(prev => !prev)}
-        onOpenCitedDocs={() => {
-          setSelectedDocId(null);
-          setCitedDocsOpen(true);
-        }}
-        onOpenPythonModal={() => setPythonModalOpen(true)}
-        onExportSession={handleExportSession}
-        pythonStatus={pythonStatus}
-      />
-
-      {/* Main Content Area */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left Sidebar */}
+    <div className="h-screen w-screen flex flex-col bg-[#0b0f14] text-slate-100 overflow-hidden">
+      <Header project={project?.name} board={board?.name} title={chat?.title} model={model}
+        onToggleSidebar={() => setSidebarOpen(open => !open)} />
+      <div className="flex flex-1 min-h-0">
         {sidebarOpen && (
-          <Sidebar
-            workspaces={workspaces}
-            activeSessionId={activeSessionId}
-            onSelectSession={handleSelectSession}
-            onNewChat={handleNewChat}
-            onOpenSvdInspector={() => {
-              setSelectedRegisterToInspect(null);
-              setSvdModalOpen(true);
-            }}
-            onOpenSettings={() => setSettingsModalOpen(true)}
-            activeModelName={selectedModel}
-          />
+          <Sidebar boards={boards} projects={projects} activeProjectId={activeProjectId}
+            uploading={uploading} boardError={boardError} onImportBoard={importBoard}
+            onCreateProject={createProject} onCreateChat={createChat}
+            onSelectProject={setActiveProjectId} onSelectChat={selectChat} />
         )}
-
-        {/* Center / Right Chat View */}
-        <main className="flex-1 flex flex-col bg-[#0b0f14] overflow-hidden relative">
-          <ChatArea
-            messages={currentSession?.messages || []}
-            isStreaming={isStreaming}
-            streamingContent={streamingContent}
-            onOpenCitedDoc={handleOpenCitedDoc}
-            onRegenerate={handleRegenerate}
-            onInspectRegister={handleInspectRegister}
-          />
-
-          {/* Bottom Floating Input Bar */}
-          <MessageInput
-            onSendMessage={handleSendMessage}
-            disabled={isStreaming}
-            models={models}
-            selectedModel={selectedModel}
-            onSelectModel={setSelectedModel}
-            onOpenFileAttachment={() => {
-              setSelectedRegisterToInspect(null);
-              setSvdModalOpen(true);
-            }}
-          />
+        <main className="flex-1 min-w-0 flex flex-col">
+          {setupError ? (
+            <div className="m-auto p-6 text-center">
+              <p role="alert" className="mb-3 text-amber-300">{setupError}</p>
+              <button className="rounded-lg bg-white/10 px-4 py-2" onClick={connect}>Retry connection</button>
+            </div>
+          ) : chat ? (
+            <Fragment key={chat.id}>
+              <ChatArea messages={chat.messages} error={chat.error}
+                streamingText={reply?.chatId === chat.id ? reply.text : undefined} />
+              <MessageInput onSendMessage={send} disabled={!!reply} />
+            </Fragment>
+          ) : (
+            <p role="status" className="m-auto text-slate-400">Connecting to the local backend…</p>
+          )}
         </main>
       </div>
-
-      {/* Cited Documents Slide-Over Drawer */}
-      <CitedDocsDrawer
-        isOpen={citedDocsOpen}
-        onClose={() => setCitedDocsOpen(false)}
-        citations={allCitations}
-        selectedDocId={selectedDocId}
-      />
-
-      {/* SVD Register & Bitfield Explorer Modal */}
-      <SvdInspectorModal
-        isOpen={svdModalOpen}
-        onClose={() => setSvdModalOpen(false)}
-        initialRegisterName={selectedRegisterToInspect}
-      />
-
-      {/* Python Backend & Desktop Wire-Up Modal */}
-      <PythonBackendModal
-        isOpen={pythonModalOpen}
-        onClose={() => setPythonModalOpen(false)}
-        status={pythonStatus}
-        onRefreshStatus={refreshPythonStatus}
-      />
-
-      {/* Inference & System Settings Modal */}
-      <SettingsModal
-        isOpen={settingsModalOpen}
-        onClose={() => setSettingsModalOpen(false)}
-        models={models}
-        selectedModel={selectedModel}
-        onSelectModel={setSelectedModel}
-        onOpenPythonBridge={() => setPythonModalOpen(true)}
-      />
     </div>
   );
 }

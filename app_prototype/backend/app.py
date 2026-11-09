@@ -1,93 +1,123 @@
-"""
-Hardware Copilot - Python Local & Desktop Backend
-FastAPI server providing SVD parsing, Datasheet RAG, and Ollama streaming proxy.
+"""Local web API for the firmware assistant."""
 
-Run directly with:
-    pip install -r requirements.txt
-    uvicorn app:app --host 127.0.0.1 --port 8000 --reload
-"""
-
-import os
 import json
+import logging
+import sys
 import xml.etree.ElementTree as ET
-from typing import List, Optional, Dict, Any
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
-import requests
+from contextlib import asynccontextmanager, closing
+from pathlib import Path
+from threading import Lock
+from typing import Literal
 
-app = FastAPI(
-    title="Hardware Copilot Python API",
-    description="SVD register map parser, datasheet RAG engine, and Ollama bridge",
-    version="1.4.0"
-)
+from defusedxml.common import DefusedXmlException
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse, StreamingResponse
+from openai import OpenAIError
+from pydantic import BaseModel, Field
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-# Allow local desktop frontend from Vite (port 3000) or PyWebView
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from RAG import rag
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
-DEFAULT_MODEL = "qwen2.5-coder:32b"
+MAX_BOARD_BYTES = 16 * 1024 * 1024
+FRONTEND_ORIGINS = {
+    f"http://{host}:{port}" for host in ("localhost", "127.0.0.1") for port in (3000, 4173)
+}
+library_lock = Lock()
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app):
+    with (
+        rag.OpenAI(base_url=rag.BASE_URL, api_key=rag.API_KEY, timeout=180, max_retries=0) as client,
+        closing(rag.QdrantClient(path=rag.QDRANT_PATH, force_disable_check_same_thread=True)) as library,
+    ):
+        rag.client, rag.qdrant = client, library
+        try:
+            yield
+        finally:
+            rag.client = rag.qdrant = None
+
+
+app = FastAPI(title="Hardware Copilot", lifespan=lifespan)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "[::1]"])
+
+
+@app.middleware("http")
+async def local_writes_only(request: Request, call_next):
+    origin = request.headers.get("origin")
+    if request.method == "POST" and origin and origin not in FRONTEND_ORIGINS:
+        return JSONResponse({"detail": "Open the local frontend to use this API."}, status_code=403)
+    return await call_next(request)
+
+
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
 
 class ChatRequest(BaseModel):
+    board_id: str
     prompt: str
-    mcu: Optional[str] = "STM32H743ZI"
-    model: Optional[str] = DEFAULT_MODEL
-    history: Optional[List[Dict[str, str]]] = []
+    history: list[ChatMessage] = Field(default_factory=list)
+
 
 class RegisterCalcRequest(BaseModel):
     register: str
-    fields: Dict[str, int]
+    fields: dict[str, int]
+
 
 @app.get("/api/health")
 def health_check():
-    return {
-        "status": "healthy",
-        "active_model": DEFAULT_MODEL,
-        "ollama_host": OLLAMA_HOST,
-        "version": "1.4.0"
-    }
+    return {"status": "healthy", "active_model": rag.CHAT_MODEL}
+
+
+@app.get("/api/boards")
+def list_boards():
+    return rag.board_map.list_boards()
+
+
+@app.post("/api/boards")
+def upload_board(file: UploadFile):
+    data = file.file.read(MAX_BOARD_BYTES + 1)
+    if len(data) > MAX_BOARD_BYTES:
+        raise HTTPException(413, "Board XML must be 16 MB or smaller.")
+    try:
+        return rag.board_map.import_board(data)
+    except (ET.ParseError, DefusedXmlException, LookupError) as exc:
+        raise HTTPException(422, "Choose a valid CMSIS-SVD XML file without a DTD.") from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
 
 @app.post("/api/chat")
-async def chat_endpoint(req: ChatRequest):
-    """Streams token-by-token from local Ollama or returns SVD-grounded answer"""
-    system_prompt = (
-        f"You are Hardware Copilot, an expert embedded firmware & silicon engineer for {req.mcu}. "
-        "Always cite exact datasheet chapters, reference manual pages, register bitfield offsets, "
-        "and provide copy-paste ready CMSIS C code with bitmask definitions."
-    )
+def chat_endpoint(req: ChatRequest):
+    if not req.prompt.strip():
+        raise HTTPException(422, "Enter a message.")
+    if not any(board["id"] == req.board_id for board in rag.board_map.list_boards()):
+        raise HTTPException(404, "This board is missing from the local board database.")
 
-    ollama_payload = {
-        "model": req.model or DEFAULT_MODEL,
-        "system": system_prompt,
-        "prompt": req.prompt,
-        "stream": True,
-        "options": {
-            "temperature": 0.2,
-            "num_ctx": 32768
-        }
-    }
+    def generate():
+        try:
+            history = [message.model_dump() for message in req.history]
+            board_context = rag.board_map.context(req.board_id, req.prompt)
+            with library_lock:
+                hits = rag.retrieve(req.prompt, board_id=req.board_id)
+            if any("file" in hit.payload for hit in hits):
+                hits = rag.fit_code_context(req.prompt, hits, history, board_context)
+            prompt = rag.build_rag_prompt(req.prompt, hits, board_context)
+            with rag.open_chat_stream([*history, {"role": "user", "content": prompt}]) as stream:
+                for chunk in stream:
+                    if chunk.choices and (text := chunk.choices[0].delta.content):
+                        yield json.dumps({"text": text}) + "\n"
+            yield '{"done": true}\n'
+        except (rag.httpx.HTTPError, OpenAIError, RuntimeError):
+            logger.exception("Local chat failed")
+            yield json.dumps({"error": "Local chat failed. Check that Lemonade is running with the configured models, then try again."}) + "\n"
 
-    try:
-        def generate():
-            with requests.post(f"{OLLAMA_HOST}/api/generate", json=ollama_payload, stream=True) as r:
-                for line in r.iter_lines():
-                    if line:
-                        chunk = json.loads(line.decode("utf-8"))
-                        yield chunk.get("response", "")
-        
-        return StreamingResponse(generate(), media_type="text/plain")
-    except Exception:
-        # Fallback if Ollama isn't currently booted
-        return {
-            "content": f"[Python Backend] Connected to Python bridge for {req.mcu}. Processed prompt: '{req.prompt}'. Ensure Ollama is running at {OLLAMA_HOST} for live LLM inference."
-        }
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
+
 
 @app.post("/api/index-svd")
 async def parse_svd_file(file: UploadFile = File(...)):
