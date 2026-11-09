@@ -4,3 +4,7 @@ pywebview>=5.0.0
 requests>=2.31.0
 pydantic>=2.6.0
 python-multipart>=0.0.9
+defusedxml>=0.7.1
+openai
+httpx
+qdrant-client

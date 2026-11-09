@@ -88,3 +88,24 @@ export interface PythonBackendStatus {
   activeModel: string;
   version: string;
 }
+
+export interface Board {
+  id: string;
+  name: string;
+  revision: string;
+}
+
+export interface ProjectChat {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  error?: string;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  boardId: string;
+  activeChatId: string;
+  chats: ProjectChat[];
+}

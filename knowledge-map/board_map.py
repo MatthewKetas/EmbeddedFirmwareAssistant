@@ -1,3 +1,4 @@
+import hashlib
 import re
 import sqlite3
 from contextlib import closing
@@ -59,14 +60,47 @@ def initialize(db):
             )
 
 
+def list_boards():
+    with connect() as db:
+        initialize(db)
+        boards = db.execute("SELECT id, name, revision FROM boards ORDER BY id").fetchall()
+    return [dict(board) for board in boards]
+
+
+def import_board(data):
+    from defusedxml import ElementTree as SafeElementTree
+
+    device = SafeElementTree.fromstring(data, forbid_dtd=True)
+    for element in device.iter():
+        element.tag = element.tag.rsplit("}", 1)[-1]
+    name = device.findtext("name", "").strip()
+    revision = device.findtext("version", "").strip() or "Unspecified"
+    peripherals = device.findall("./peripherals/peripheral")
+    registers = device.findall("./peripherals/peripheral/registers/register")
+    if device.tag != "device" or not name or not peripherals or any(
+        not element.findtext("name", "").strip() for element in (*peripherals, *registers)
+    ):
+        raise ValueError("Choose a CMSIS-SVD device XML file with named peripherals and registers.")
+    xml = ElementTree.tostring(device, encoding="unicode")
+    board_id = "svd-" + hashlib.sha256(xml.encode()).hexdigest()[:24]
+    with connect() as db:
+        initialize(db)
+        with db:
+            db.execute("INSERT INTO svd_devices VALUES (?, ?, ?) ON CONFLICT(id) DO NOTHING", (board_id, name, xml))
+            db.execute(
+                "INSERT INTO boards VALUES (?, ?, ?, ?) ON CONFLICT(name, revision) DO NOTHING",
+                (board_id, name, revision, board_id),
+            )
+            if not db.execute("SELECT 1 FROM boards WHERE id = ?", (board_id,)).fetchone():
+                raise ValueError(f"A different XML file already defines {name} ({revision}).")
+    return {"id": board_id, "name": name, "revision": revision}
+
+
 def select_board(arg, current):
     if arg == "none":
         print("Board selection cleared.\n")
         return None
-    with connect() as db:
-        initialize(db)
-        boards = db.execute("SELECT id, name, revision FROM boards ORDER BY id").fetchall()
-    for board in boards:
+    for board in list_boards():
         label = f"{board['name']} ({board['revision']})"
         if arg == board["id"]:
             print(f"Selected board: {label}\n")
@@ -99,12 +133,12 @@ def remember(board_id, arg):
 def svd_matches(xml, question):
     symbols = set(re.findall(r"[A-Z0-9_]+", question.upper()))
     for peripheral in ElementTree.fromstring(xml).findall("./peripherals/peripheral"):
-        name = peripheral.findtext("name")
+        name = peripheral.findtext("name", "").strip()
         base = peripheral.findtext("baseAddress")
         if name.upper() in symbols:
             yield f"{name} base address {base}"
         for register in peripheral.findall("./registers/register"):
-            reg = register.findtext("name")
+            reg = register.findtext("name", "").strip()
             qualified = f"{name}_{reg}".upper()
             if symbols.intersection((reg.upper(), qualified, qualified + "_REG")):
                 description = " ".join(register.findtext("description", "").split())[:180]
