@@ -1,0 +1,6 @@
+*
+!critter.c
+!evaluator/
+!evaluator/grade.sh
+!evaluator/tests/
+!evaluator/tests/test_critter.c
