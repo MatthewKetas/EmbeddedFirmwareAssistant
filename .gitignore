@@ -220,3 +220,6 @@ __marimo__/
 # Mac Files
 .idea/
 .DS_Store
+
+# Local Qdrant index and runtime files
+/RAG/qdrant_data/
