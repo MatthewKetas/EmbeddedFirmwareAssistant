@@ -14,7 +14,7 @@ import httpx
 from openai import OpenAI
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
-    Distance, FieldCondition, Filter, MatchAny, MatchValue, PointStruct, VectorParams,
+    Distance, FieldCondition, Filter, MatchAny, MatchValue, PointStruct, VectorParams, IsEmptyCondition, PayloadField
 )
 
 # Library, cache and history live next to this script, wherever you launch it from.
@@ -223,8 +223,7 @@ def chunk_page(chunk):
     except Exception:
         return None
 
-
-def ingest(path_str: str) -> None:
+def ingest(path_str: str, board_id: str | None = None) -> None:
     path = resolve_path(path_str)
     doc = convert(path)
 
@@ -249,7 +248,7 @@ def ingest(path_str: str) -> None:
         PointStruct(
             id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{path.name}:{i}")),
             vector=vec,
-            payload={"source": path.name, "chunk": i, "page": chunk_page(c), "text": text},
+            payload={"source": path.name, "chunk": i, "page": chunk_page(c), "text": text, "board_id": board_id},
         )
         for i, (c, text, vec) in enumerate(zip(chunks, texts, vectors))
     ]
@@ -306,8 +305,7 @@ def code_chunks(repo: Path):
                     line += part.count("\n")
                     start = end
 
-
-def ingest_code(path_str: str) -> str:
+def ingest_code(path_str: str, board_id: str | None = None) -> str:
     repo = Path(path_str.strip("\"'")).expanduser().resolve(strict=True)
     if not repo.is_dir():
         raise NotADirectoryError(f"Expected a repository directory: {repo}")
@@ -325,7 +323,7 @@ def ingest_code(path_str: str) -> str:
                 PointStruct(
                     id=str(uuid.uuid5(revision, str(i))),
                     vector=vector,
-                    payload={**payload, "source": source, "revision": str(revision)},
+                    payload={**payload, "source": source, "revision": str(revision), "board_id": board_id},
                 )
                 for i, (payload, vector) in enumerate(zip(batch, vectors, strict=True), count)
             ]
@@ -346,13 +344,19 @@ def ingest_code(path_str: str) -> str:
     print(f"Indexed {count} code chunks from {source}\n")
     return source
 
-
-def retrieve(question: str, only: list[str] | None = None):
+def retrieve(question: str, only: list[str] | None = None, board_id: str | None = None):
     if not qdrant.collection_exists(COLLECTION) or qdrant.count(COLLECTION).count == 0:
         return []
-    flt = None
+    must = []
     if only:
-        flt = Filter(must=[FieldCondition(key="source", match=MatchAny(any=only))])
+        must.append(FieldCondition(key="source", match=MatchAny(any=only)))
+    if board_id:
+        # This board's chunks, plus untagged ones (indexed with no board selected).
+        must.append(Filter(should=[
+            FieldCondition(key="board_id", match=MatchValue(value=board_id)),
+            IsEmptyCondition(is_empty=PayloadField(key="board_id")),
+        ]))
+    flt = Filter(must=must) if must else None
     qvec = embed_query(question)
     if UNLOAD_AFTER_QUERY:
         unload_model(EMBED_MODEL)
@@ -614,7 +618,7 @@ def interactive_loop():
             continue
 
         if low.startswith("/add "):
-            ingest(user_input[5:])
+            ingest(user_input[5:], board_id)
             continue
 
         if low == "/code":
@@ -622,7 +626,7 @@ def interactive_loop():
             continue
 
         if low.startswith("/code "):
-            only = [ingest_code(user_input[6:])]
+            only = [ingest_code(user_input[6:], board_id)]
             print(f"Retrieval scope: {only[0]}\n")
             continue
 
@@ -640,7 +644,7 @@ def interactive_loop():
 
         # Normal question: retrieve from the library if there is one.
         board_context = board_map.context(board_id, user_input) if board_id else ""
-        hits = retrieve(user_input, only)
+        hits = retrieve(user_input, only, board_id)
         if any("file" in h.payload for h in hits):
             hits = fit_code_context(user_input, hits, history, board_context)
             if not hits:
