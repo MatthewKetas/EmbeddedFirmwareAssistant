@@ -61,6 +61,16 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+# Local board knowledge map
+/knowledge-map/knowledge.sql
+/knowledge-map/knowledge.sql-*
+
+# Local Qdrant index and runtime files
+/RAG/qdrant_data/
+
+# Local Critter evaluation outputs
+/pass@k/results/
+
 # Flask stuff:
 instance/
 .webassets-cache
