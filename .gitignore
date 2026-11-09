@@ -68,6 +68,9 @@ db.sqlite3-journal
 # Local Qdrant index and runtime files
 /RAG/qdrant_data/
 
+# Local Critter evaluation outputs
+/pass@k/results/
+
 # Flask stuff:
 instance/
 .webassets-cache
