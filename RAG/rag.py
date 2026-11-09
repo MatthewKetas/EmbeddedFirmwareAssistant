@@ -303,7 +303,7 @@ def stream_reply(messages: list) -> str:
 
 HELP = (
     "Commands:\n"
-    "  /add <file>              index a file (from the datasheets folder) into the library\n"
+    "  /add <file>              index a file (from the datasheets folder) into the library (not case sensitive)\n"
     "  /file <file> [question]  paste a whole document into the chat (no library)\n"
     "  /list                    show indexed files\n"
     "  /only <f1> [f2 ...]|all  restrict retrieval to one or more files (quote names with spaces)\n"
