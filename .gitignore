@@ -61,6 +61,16 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+# Local SQLite databases and their journal, WAL, and shared-memory files
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.db3
+*.db3-*
+
 # Local board knowledge map
 /knowledge-map/knowledge.sql
 /knowledge-map/knowledge.sql-*
