@@ -45,7 +45,7 @@ class CodeTests(unittest.TestCase):
                 patch.object(rag, "get_tokenizer", return_value=StubTokenizer()),
                 patch.object(rag, "embed", side_effect=lambda texts: [[1.0, 0.0] for _ in texts]),
                 patch.object(rag, "make_prompt", return_value=lambda _: next(commands)),
-                patch.object(rag, "stream_reply", return_value="PWM uses pin 12.") as reply,
+                patch.object(rag, "stream_reply", return_value=("PWM uses pin 12.", {})) as reply,
             ):
                 rag.ensure_collection()
                 db.upsert(rag.COLLECTION, points=[rag.PointStruct(
@@ -54,6 +54,7 @@ class CodeTests(unittest.TestCase):
                 )])
                 rag.interactive_loop()
                 prompt = reply.call_args.args[0][-1]["content"]
+                self.assertEqual(reply.call_args.args[1], rag.CODE_MODEL)
                 self.assertIn("[motor fw/pins.h:1-1]\n#define PWM_PIN 12", prompt)
                 self.assertIn("[motor fw/pwm.c:3-5]\n#if BOARD_A", prompt)
                 self.assertNotIn("unrelated.pdf", prompt)

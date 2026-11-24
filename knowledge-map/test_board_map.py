@@ -33,7 +33,7 @@ class BoardMapTests(unittest.TestCase):
                 patch.object(board_map, "DB_PATH", Path(temp, "knowledge.sql")),
                 patch.object(rag, "make_prompt", return_value=lambda _: next(commands)),
                 patch.object(rag, "retrieve", return_value=[hit]),
-                patch.object(rag, "stream_reply", return_value="reply") as reply,
+                patch.object(rag, "stream_reply", return_value=("reply", {})) as reply,
             ):
                 rag.interactive_loop()
                 uno, esp, unscoped = (call.args[0] for call in reply.call_args_list)

@@ -36,9 +36,20 @@ DOCS_DIR = next(
 # --- Configuration -----------------------------------------------------
 BASE_URL = "http://localhost:13305/api/v1"
 API_KEY = "lemonade"                        # ignored by Lemonade
-CHAT_MODEL = "Qwen3.6-35B-A3B-GGUF"
-CHAT_CONTEXT_TOKENS = 16_384                # room for retrieved passages, history and the reply
-CHAT_TOKENIZER = "Qwen/Qwen3.6-35B-A3B"
+# Two chat models: turns whose retrieved context contains code go to CODE_MODEL,
+# everything else (datasheet questions, /file) goes to the smaller LEXICAL_MODEL.
+# Must match the names Lemonade lists (check /api/v1/models).
+CODE_MODEL = "Qwen3.6-35B-A3B-GGUF"
+LEXICAL_MODEL = "Llama-3.2-3B-Instruct-GGUF"   # placeholder name until the lexical model is chosen
+# Per-model load options. ctx_size sizes the KV cache, so a smaller value frees VRAM.
+# llamacpp_args goes to llama-server on load (e.g. "--n-cpu-moe 20"); "" leaves the server's own.
+# Thinking is off for the lexical model: it only reads the retrieved context, and hidden
+# reasoning was most of the completion tokens in the one timed run (2,984 tokens, ~590 words shown).
+MODEL_OPTIONS = {
+    CODE_MODEL: {"ctx_size": 16_384, "llamacpp_args": "", "thinking": True},
+    LEXICAL_MODEL: {"ctx_size": 16_384, "llamacpp_args": "", "thinking": False},
+}
+CHAT_TOKENIZER = "Qwen/Qwen3.6-35B-A3B"      # CODE_MODEL's tokenizer, for fitting code context
 RAG_CONTEXT_TOKENS = 4_000                  # retrieved context on turns with code
 RAG_REPLY_TOKENS = 2_048                    # space reserved for generation
 # Must match the name Lemonade lists for your embedding model (check /api/v1/models)
@@ -104,7 +115,7 @@ def teardown() -> None:
                 resource.close()
             except Exception as e:
                 print(f"[could not close {type(resource).__name__}: {e}]")
-    for model in (EMBED_MODEL, CHAT_MODEL):
+    for model in (EMBED_MODEL, CODE_MODEL, LEXICAL_MODEL):
         unload_model(model)
 
 
@@ -407,7 +418,7 @@ def fit_code_context(question: str, hits, history: list, board_context: str = ""
         text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         return len(tokenizer.encode(text, add_special_tokens=False, verbose=False))
 
-    limit = min(prompt_tokens([]) + RAG_CONTEXT_TOKENS, CHAT_CONTEXT_TOKENS - RAG_REPLY_TOKENS)
+    limit = min(prompt_tokens([]) + RAG_CONTEXT_TOKENS, MODEL_OPTIONS[CODE_MODEL]["ctx_size"] - RAG_REPLY_TOKENS)
     selected = []
     for hit in hits:
         if prompt_tokens(selected + [hit]) <= limit:
@@ -415,52 +426,96 @@ def fit_code_context(question: str, hits, history: list, board_context: str = ""
     return selected
 
 
-def print_usage(usage, elapsed: float) -> None:
-    if not usage:
-        print(f"[usage stats not returned by server | time: {elapsed:.2f}s]")
-        return
-    tps = usage.completion_tokens / elapsed if elapsed > 0 else 0
-    print(
-        f"[tokens: prompt={usage.prompt_tokens}, completion={usage.completion_tokens}, "
-        f"total={usage.total_tokens} | time: {elapsed:.2f}s | ~{tps:.1f} tok/s]"
-    )
+def pick_model(hits) -> str:
+    return CODE_MODEL if any("file" in h.payload for h in hits) else LEXICAL_MODEL
 
 
-def stream_reply(messages: list) -> str:
-    start = time.time()
-    # Context size is a model-load option, not a chat-completion option.
-    response = httpx.post(
-        f"{BASE_URL}/load",
-        json={"model_name": CHAT_MODEL, "ctx_size": CHAT_CONTEXT_TOKENS},
-        timeout=120,
-    )
+def print_stats(stats: dict) -> None:
+    # Load, prefill and decode are reported apart: one blended tok/s hides which one is slow.
+    parts = [stats["model"], f"load {stats['load_s']:.2f}s"]
+    if stats["ttft_s"] is not None:
+        prefill = f"prefill {stats['ttft_s']:.2f}s"
+        if stats["prompt_tokens"] is not None:
+            prefill += f" ({stats['prompt_tokens']} tok"
+            prefill += f", {stats['prefill_tps']:.0f} tok/s)" if stats["prefill_tps"] else ")"
+        parts.append(prefill)
+    if stats["completion_tokens"] is not None:
+        decode = f"decode {stats['completion_tokens']} tok"
+        parts.append(decode + (f" @ {stats['decode_tps']:.1f} tok/s" if stats["decode_tps"] else ""))
+    if stats["thinking_tokens"]:
+        parts.append(f"thinking ~{stats['thinking_tokens']} tok")
+    parts.append(f"total {stats['total_s']:.2f}s")
+    print(f"[{' | '.join(parts)}]")
+
+
+def stream_reply(messages: list, model: str) -> tuple[str, dict]:
+    options = MODEL_OPTIONS[model]
+    start = time.monotonic()
+    # Context size is a model-load option, not a chat-completion option. Lemonade keeps one
+    # LLM loaded by default, so switching between the two chat models reloads; load_s shows it.
+    load = {"model_name": model, "ctx_size": options["ctx_size"]}
+    if options["llamacpp_args"]:
+        load["llamacpp_args"] = options["llamacpp_args"]
+    response = httpx.post(f"{BASE_URL}/load", json=load, timeout=120)
     response.raise_for_status()
     if response.json().get("status") == "error":
-        raise RuntimeError(f"Could not load {CHAT_MODEL}: {response.json().get('message')}")
+        raise RuntimeError(f"Could not load {model}: {response.json().get('message')}")
+    loaded = time.monotonic()
+    extra = {"top_k": TOP_K}
+    if not options["thinking"]:
+        extra["enable_thinking"] = False   # Lemonade extension
     stream = client.chat.completions.create(
-        model=CHAT_MODEL,
+        model=model,
         messages=messages,
         temperature=TEMPERATURE,
         top_p=TOP_P,
-        extra_body={"top_k": TOP_K},
+        extra_body=extra,
         stream=True,
         stream_options={"include_usage": True},
     )
     print("Response: ", end="", flush=True)
-    reply, usage = "", None
+    reply, usage, timings = "", None, None
+    first = answer = last = None
+    thinking = 0
     with stream:
         for chunk in stream:
             if chunk.choices:
-                delta = chunk.choices[0].delta.content
-                if delta:
-                    print(delta, end="", flush=True)
-                    reply += delta
+                delta = chunk.choices[0].delta
+                # Thinking arrives as reasoning_content; it is counted, not shown or kept.
+                if getattr(delta, "reasoning_content", None):
+                    thinking += 1
+                    first = first or time.monotonic()
+                    last = time.monotonic()
+                if delta.content:
+                    first = first or time.monotonic()
+                    answer = answer or time.monotonic()
+                    last = time.monotonic()
+                    print(delta.content, end="", flush=True)
+                    reply += delta.content
             if chunk.usage:
                 usage = chunk.usage
+            timings = getattr(chunk, "timings", None) or timings
+    end = time.monotonic()
     print()
-    print_usage(usage, time.time() - start)
+    completion = usage.completion_tokens if usage else None
+    decode_tps = (timings or {}).get("predicted_per_second")
+    if decode_tps is None and completion and first and last > first:
+        decode_tps = (completion - 1) / (last - first)  # tokens after the first, over their time
+    stats = {
+        "model": model,
+        "load_s": loaded - start,
+        "ttft_s": first - loaded if first else None,
+        "answer_s": answer - loaded if answer else None,
+        "prompt_tokens": usage.prompt_tokens if usage else None,
+        "completion_tokens": completion,
+        "thinking_tokens": thinking,
+        "prefill_tps": (timings or {}).get("prompt_per_second"),
+        "decode_tps": decode_tps,
+        "total_s": end - start,
+    }
+    print_stats(stats)
     print()
-    return reply
+    return reply, stats
 
 
 HELP = (
@@ -552,7 +607,7 @@ def make_prompt():
 
 
 def interactive_loop():
-    print(f"Chat: {CHAT_MODEL} | Embeddings: {EMBED_MODEL} | Qdrant: {QDRANT_PATH}")
+    print(f"Code: {CODE_MODEL} | Lexical: {LEXICAL_MODEL} | Embeddings: {EMBED_MODEL} | Qdrant: {QDRANT_PATH}")
     print(f"Script folder: {SCRIPT_DIR}")
     print(f"Datasheets:    {DOCS_DIR}{'' if DOCS_DIR.is_dir() else '  (NOT FOUND)'}")
     print(HELP)
@@ -639,7 +694,7 @@ def interactive_loop():
                 md = md[:MAX_CHARS]
             content = f"{question}\n\n--- BEGIN DOCUMENT ---\n{md}\n--- END DOCUMENT ---"
             history.append({"role": "user", "content": content})
-            history.append({"role": "assistant", "content": stream_reply(history)})
+            history.append({"role": "assistant", "content": stream_reply(history, LEXICAL_MODEL)[0]})
             continue
 
         # Normal question: retrieve from the library if there is one.
@@ -660,7 +715,7 @@ def interactive_loop():
         else:
             content = user_input
 
-        reply = stream_reply(history + [{"role": "user", "content": content}])
+        reply, _ = stream_reply(history + [{"role": "user", "content": content}], pick_model(hits))
         history.append({"role": "user", "content": user_input})
         history.append({"role": "assistant", "content": reply})
 

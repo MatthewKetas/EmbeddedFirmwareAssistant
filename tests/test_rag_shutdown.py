@@ -28,7 +28,7 @@ class ShutdownTests(unittest.TestCase):
         unloads = [c for c in self.post.call_args_list if c.args[0].endswith("/unload")]
         self.assertEqual(unloads, [
             call(f"{rag.BASE_URL}/unload", json={"model_name": model}, timeout=10)
-            for model in (rag.EMBED_MODEL, rag.CHAT_MODEL)
+            for model in (rag.EMBED_MODEL, rag.CODE_MODEL, rag.LEXICAL_MODEL)
         ])
 
     def test_normal_exit(self):
@@ -65,7 +65,8 @@ class ShutdownTests(unittest.TestCase):
         loads = [c for c in self.post.call_args_list if c.args[0].endswith("/load")]
         self.assertEqual(loads, [call(
             f"{rag.BASE_URL}/load",
-            json={"model_name": rag.CHAT_MODEL, "ctx_size": rag.CHAT_CONTEXT_TOKENS},
+            json={"model_name": rag.LEXICAL_MODEL,
+                  "ctx_size": rag.MODEL_OPTIONS[rag.LEXICAL_MODEL]["ctx_size"]},
             timeout=120,
         )] * 2)
         self.assertEqual(create.call_args.kwargs["messages"], [
@@ -92,7 +93,7 @@ class ShutdownTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "database locked"):
             rag.main()
         self.openai.return_value.close.assert_called_once_with()
-        self.assertEqual(self.post.call_count, 2)
+        self.assertEqual(self.post.call_count, 3)
 
     def test_stop_signals_unwind_and_restore_handlers(self):
         for sig in (signal.SIGINT, signal.SIGTERM):
@@ -132,7 +133,7 @@ class ShutdownTests(unittest.TestCase):
         error = RuntimeError("stream failed")
         stream.__iter__.side_effect = error
         with self.assertRaisesRegex(RuntimeError, "stream failed"):
-            rag.stream_reply([])
+            rag.stream_reply([], rag.LEXICAL_MODEL)
         stream.__exit__.assert_called_once_with(RuntimeError, error, unittest.mock.ANY)
 
     def test_model_load_failure_exits_before_generation_and_cleans_up(self):
