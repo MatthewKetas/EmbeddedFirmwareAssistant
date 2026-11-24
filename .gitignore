@@ -233,3 +233,10 @@ __marimo__/
 
 # Local Qdrant index and runtime files
 /RAG/qdrant_data/
+# Local benchmark outputs
+/RAG/bench_results/
+
+# Local chat history, Docling conversion cache and Qdrant libraries, in any folder
+.chat_history
+.docling_cache/
+qdrant_data/
