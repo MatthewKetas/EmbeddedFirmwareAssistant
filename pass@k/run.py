@@ -57,16 +57,19 @@ def summarize(attempts):
     }
 
 
-def run(model, count, image, output):
+def run(model, count, image, output, thinking):
     prompt = (ROOT / "critter.c").read_text(encoding="utf-8")
     attempts = []
-    report = {"model": model, "sampling": SAMPLING, "requested_samples": count, "attempts": attempts}
+    report = {"model": model, "sampling": SAMPLING, "thinking": thinking, "requested_samples": count,
+              "attempts": attempts}
+    # Lemonade extension; "on" sends nothing, so the model keeps its own default.
+    extra_body = {} if thinking == "on" else {"enable_thinking": False}
     with OpenAI(base_url=BASE_URL, api_key="lemonade", timeout=300, max_retries=0) as client:
         for i in range(1, count + 1):
             print(f"Generating sample {i}/{count}...", flush=True)
             start = time.monotonic()
             response = client.chat.completions.create(
-                model=model, messages=[{"role": "user", "content": prompt}], **SAMPLING,
+                model=model, messages=[{"role": "user", "content": prompt}], extra_body=extra_body, **SAMPLING,
             )
             generation_seconds = round(time.monotonic() - start, 3)
             choice = response.choices[0]
@@ -97,6 +100,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generate and evaluate independent Critter implementations.")
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--thinking", choices=["on", "off"], default="on")
     args = parser.parse_args()
     if args.runs < 1:
         parser.error("--runs must be at least 1")
@@ -106,7 +110,7 @@ def main():
         results.mkdir(exist_ok=True)
         output = Path(tempfile.mkdtemp(prefix=time.strftime("%Y%m%d-%H%M%S-"), dir=results))
         print(f"Results: {output}", flush=True)
-        print(json.dumps(run(args.model, args.runs, image, output), indent=2))
+        print(json.dumps(run(args.model, args.runs, image, output, args.thinking), indent=2))
     except FileNotFoundError as error:
         if error.filename == "docker":
             raise SystemExit("Docker is required to run the evaluator.") from error
