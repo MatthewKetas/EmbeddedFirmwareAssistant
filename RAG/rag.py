@@ -457,7 +457,9 @@ def stream_reply(messages: list, model: str) -> tuple[str, dict]:
     if options["llamacpp_args"]:
         load["llamacpp_args"] = options["llamacpp_args"]
     response = httpx.post(f"{BASE_URL}/load", json=load, timeout=120)
-    response.raise_for_status()
+    # Lemonade's own message names the problem (e.g. an unknown model); the HTTP status alone does not.
+    if response.status_code >= 400:
+        raise RuntimeError(f"Could not load {model}: {response.status_code} {response.text[:300]}")
     if response.json().get("status") == "error":
         raise RuntimeError(f"Could not load {model}: {response.json().get('message')}")
     loaded = time.monotonic()
