@@ -4,6 +4,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import httpx
+
 from RAG import rag
 
 
@@ -88,6 +90,17 @@ class SpeedTests(unittest.TestCase):
         with patch.dict(rag.MODEL_OPTIONS[rag.CODE_MODEL], thinking=True):
             self.reply(rag.CODE_MODEL, [chunk(content="a")])
         self.assertNotIn("enable_thinking", self.client.chat.completions.create.call_args.kwargs["extra_body"])
+
+    def test_load_error_shows_lemonade_message(self):
+        # A mistyped model name used to surface only as "404 Not Found".
+        self.post.side_effect = None
+        self.post.return_value = httpx.Response(
+            404, json={"error": "Model not found: Gemma-4-E48-it-GGUF"},
+            request=httpx.Request("POST", f"{rag.BASE_URL}/load"),
+        )
+        with self.assertRaisesRegex(RuntimeError, r"Could not load .*: 404 .*Model not found: Gemma-4-E48-it-GGUF"):
+            rag.stream_reply([{"role": "user", "content": "q"}], rag.LEXICAL_MODEL)
+        self.client.chat.completions.create.assert_not_called()
 
     def test_load_sends_each_models_options(self):
         with patch.dict(rag.MODEL_OPTIONS[rag.CODE_MODEL], llamacpp_args="--n-cpu-moe 20", ctx_size=8192):
