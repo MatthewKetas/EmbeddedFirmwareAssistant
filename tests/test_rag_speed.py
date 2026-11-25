@@ -79,10 +79,14 @@ class SpeedTests(unittest.TestCase):
         self.assertAlmostEqual(stats["ttft_s"], 0.01)      # thinking token = prefill finished
         self.assertAlmostEqual(stats["answer_s"], 0.04)    # first visible answer token
 
-    def test_lexical_model_has_thinking_off_and_code_model_keeps_it(self):
-        self.reply(rag.LEXICAL_MODEL, [chunk(content="a")])
-        self.assertIs(self.client.chat.completions.create.call_args.kwargs["extra_body"]["enable_thinking"], False)
-        self.reply(rag.CODE_MODEL, [chunk(content="a")])
+    def test_both_chat_models_have_thinking_off_by_default(self):
+        for model in (rag.LEXICAL_MODEL, rag.CODE_MODEL):
+            self.reply(model, [chunk(content="a")])
+            self.assertIs(self.client.chat.completions.create.call_args.kwargs["extra_body"]["enable_thinking"], False)
+
+    def test_thinking_on_leaves_the_server_default(self):
+        with patch.dict(rag.MODEL_OPTIONS[rag.CODE_MODEL], thinking=True):
+            self.reply(rag.CODE_MODEL, [chunk(content="a")])
         self.assertNotIn("enable_thinking", self.client.chat.completions.create.call_args.kwargs["extra_body"])
 
     def test_load_sends_each_models_options(self):
