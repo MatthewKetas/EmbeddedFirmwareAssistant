@@ -7,6 +7,7 @@ import time
 from math import comb
 from pathlib import Path
 
+import httpx
 from openai import OpenAI, OpenAIError
 
 # RUN WITH THE FOLLOWING: .venv/bin/python 'pass@k/run.py' --runs 5
@@ -16,6 +17,7 @@ BASE_URL = "http://localhost:13305/api/v1"
 DEFAULT_MODEL = "Qwen3.6-35B-A3B-GGUF"
 GROUPS = ("io", "summary", "prediction", "pipeline")
 SAMPLING = {"temperature": 1.0, "top_p": 0.9, "max_tokens": 4096}
+CONTEXT_TOKENS = 16_384   # same as RAG/rag.py; room for the prompt plus a long thinking-on answer
 
 
 def build_grader():
@@ -57,19 +59,25 @@ def summarize(attempts):
     }
 
 
-def run(model, count, image, output, thinking):
+def run(model, count, image, output, thinking, max_tokens):
     prompt = (ROOT / "critter.c").read_text(encoding="utf-8")
     attempts = []
-    report = {"model": model, "sampling": SAMPLING, "thinking": thinking, "requested_samples": count,
+    sampling = {**SAMPLING, "max_tokens": max_tokens}
+    report = {"model": model, "sampling": sampling, "thinking": thinking, "requested_samples": count,
               "attempts": attempts}
     # Lemonade extension; "on" sends nothing, so the model keeps its own default.
     extra_body = {} if thinking == "on" else {"enable_thinking": False}
-    with OpenAI(base_url=BASE_URL, api_key="lemonade", timeout=300, max_retries=0) as client:
+    # Load with a known context size instead of the server default, which may be smaller.
+    response = httpx.post(f"{BASE_URL}/load", json={"model_name": model, "ctx_size": CONTEXT_TOKENS}, timeout=300)
+    if response.status_code >= 400 or response.json().get("status") == "error":
+        raise SystemExit(f"Could not load {model}: {response.status_code} {response.text[:300]}")
+    # Thinking-on answers can run past 10,000 tokens at 15-50 tok/s, so allow an hour per sample.
+    with OpenAI(base_url=BASE_URL, api_key="lemonade", timeout=3600, max_retries=0) as client:
         for i in range(1, count + 1):
             print(f"Generating sample {i}/{count}...", flush=True)
             start = time.monotonic()
             response = client.chat.completions.create(
-                model=model, messages=[{"role": "user", "content": prompt}], extra_body=extra_body, **SAMPLING,
+                model=model, messages=[{"role": "user", "content": prompt}], extra_body=extra_body, **sampling,
             )
             generation_seconds = round(time.monotonic() - start, 3)
             choice = response.choices[0]
@@ -101,16 +109,20 @@ def main():
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--thinking", choices=["on", "off"], default="on")
+    parser.add_argument("--max-tokens", type=int, default=SAMPLING["max_tokens"],
+                        help="reply cap, thinking included; 4096 cut off every thinking-on sample")
     args = parser.parse_args()
     if args.runs < 1:
         parser.error("--runs must be at least 1")
+    if not 1 <= args.max_tokens <= CONTEXT_TOKENS - 2048:
+        parser.error(f"--max-tokens must be 1 to {CONTEXT_TOKENS - 2048}")
     try:
         image = build_grader()
         results = ROOT / "results"
         results.mkdir(exist_ok=True)
         output = Path(tempfile.mkdtemp(prefix=time.strftime("%Y%m%d-%H%M%S-"), dir=results))
         print(f"Results: {output}", flush=True)
-        print(json.dumps(run(args.model, args.runs, image, output, args.thinking), indent=2))
+        print(json.dumps(run(args.model, args.runs, image, output, args.thinking, args.max_tokens), indent=2))
     except FileNotFoundError as error:
         if error.filename == "docker":
             raise SystemExit("Docker is required to run the evaluator.") from error
