@@ -40,13 +40,13 @@ API_KEY = "lemonade"                        # ignored by Lemonade
 # everything else (datasheet questions, /file) goes to the smaller LEXICAL_MODEL.
 # Must match the names Lemonade lists (check /api/v1/models).
 CODE_MODEL = "Qwen3.6-35B-A3B-GGUF"
-LEXICAL_MODEL = "Llama-3.2-3B-Instruct-GGUF"   # placeholder name until the lexical model is chosen
+LEXICAL_MODEL = "Gemma-4-E4B-it-GGUF"
 # Per-model load options. ctx_size sizes the KV cache, so a smaller value frees VRAM.
 # llamacpp_args goes to llama-server on load (e.g. "--n-cpu-moe 20"); "" leaves the server's own.
-# Thinking is off for the lexical model: it only reads the retrieved context, and hidden
-# reasoning was most of the completion tokens in the one timed run (2,984 tokens, ~590 words shown).
+# Thinking is off for both models. On the Milestone 1 RAG prompts the code model spent
+# 2,400-4,800 tokens thinking per answer; with it off the answers kept the same key facts.
 MODEL_OPTIONS = {
-    CODE_MODEL: {"ctx_size": 16_384, "llamacpp_args": "", "thinking": True},
+    CODE_MODEL: {"ctx_size": 16_384, "llamacpp_args": "", "thinking": False},
     LEXICAL_MODEL: {"ctx_size": 16_384, "llamacpp_args": "", "thinking": False},
 }
 CHAT_TOKENIZER = "Qwen/Qwen3.6-35B-A3B"      # CODE_MODEL's tokenizer, for fitting code context
