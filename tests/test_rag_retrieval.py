@@ -70,5 +70,49 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual(sorted(h.payload["text"] for h in hits), ["general-purpose timers", "watchdog timers"])
 
 
+class PrepareChunksTests(unittest.TestCase):
+    # First lines and bodies as Docling produced them for ESP32.pdf.
+    TEXTS = [
+        "Product Overview\nESP32 is a single 2.4 GHz Wi-Fi-and-Bluetooth combo chip",
+        "Note:\nCheck the link or the QR code to make sure that you use the latest version of this document:",
+        "Contents\n\nProduct Overview, 1 = Product Overview. 2.5.3, 2 = ChipPower-upandReset",
+        "List of Tables\n\n2-4, 1 = Description of Timing Parameters for Power-up and Reset",
+        "List of Figures\n1-1, 1 = ESP32SeriesNomenclature",
+        "4.8.4 I2CInterface\nESP32 has two I2C bus interfaces",
+        "Feature List\n- Standard mode (100 Kbit/s)\n- Fast mode (400 Kbit/s)",
+        "Pin Assignment\nFor regular I2C, the pins used can be chosen from any GPIOs via the GPIO Matrix.",
+        "A.1. Notes on ESP32 Pin Lists\nTable 6-1. Notes on ESP32 Pin Lists",
+        "Related Documentation\n- ESP32 Technical Reference Manual",
+        "Revision History\n2026.07, Version = v5.3. 2026.07, Releasenotes = Fixed typos",
+        "Cont'd from previous page\n2024.08, Version = v4.6. 2024.08, Releasenotes = Improved wording",
+        "Disclaimer and Copyright Notice\nInformation in this document is subject to change",
+    ]
+
+    def test_front_matter_is_skipped(self):
+        kept = [text.split("\n", 1)[0] for _, text in rag.prepare_chunks(self.TEXTS)]
+        self.assertEqual(kept, [
+            "Product Overview", "4.8.4 I2CInterface", "4.8.4 I2CInterface > Feature List",
+            "4.8.4 I2CInterface > Pin Assignment", "A.1. Notes on ESP32 Pin Lists",
+        ])
+
+    def test_generic_headings_get_their_section_and_keep_their_index(self):
+        prepared = dict(rag.prepare_chunks(self.TEXTS))
+        self.assertEqual(prepared[6], "4.8.4 I2CInterface > Feature List\n- Standard mode (100 Kbit/s)\n"
+                                      "- Fast mode (400 Kbit/s)")
+        self.assertEqual(prepared[0], self.TEXTS[0])   # no numbered section before it
+
+    def test_a_numbered_note_is_not_a_section(self):
+        texts = ["2.2 PinOverview\nTable 2-1", "1. Functionnames:\nCLK_OUT clock output",
+                 "Pin Assignment\nFor SPI, the pins are multiplexed"]
+        self.assertEqual([t.split("\n", 1)[0] for _, t in rag.prepare_chunks(texts)],
+                         ["2.2 PinOverview", "2.2 PinOverview > 1. Functionnames:",
+                          "2.2 PinOverview > Pin Assignment"])
+
+    def test_a_continued_table_outside_the_revision_history_is_kept(self):
+        texts = ["2.6 PinMappingBetweenChipandFlash/PSRAM\nTable 2-6 ...",
+                 "Cont'd from previous page\nChip Pin, 1 = Off-Package PSRAM"]
+        self.assertEqual([i for i, _ in rag.prepare_chunks(texts)], [0, 1])
+
+
 if __name__ == "__main__":
     unittest.main()

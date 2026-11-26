@@ -1,6 +1,7 @@
 import hashlib
 import importlib.util
 import os
+import re
 import shlex
 import signal
 import sys
@@ -240,13 +241,46 @@ def chunk_page(chunk):
     except Exception:
         return None
 
+# Pages that list section titles, links or the change log look similar to almost any question
+# but answer none; in ESP32.pdf they filled up to 7 of the 10 retrieval slots.
+FRONT_MATTER = {"contents", "list of tables", "list of figures", "revision history",
+                "related documentation", "related documentation and resources", "developer zone",
+                "products", "contact us", "disclaimer and copyright notice"}
+CONTINUED = "cont'd from previous page"
+NUMBERED_HEADING = re.compile(r"^([0-9]+(\.[0-9]+)*|[A-Z]\.[0-9]+)\.?\s+\S")
+
+
+def prepare_chunks(texts: list[str]) -> list[tuple[int, str]]:
+    """Drop front matter and give generic headings their section, keeping each chunk's index.
+
+    Docling keeps only the nearest heading, so "Feature List" under "4.8.4 I2CInterface"
+    never mentions I2C; prefixing the last numbered heading lets retrieval match it.
+    """
+    kept, section, skipping = [], None, False
+    for i, text in enumerate(texts):
+        heading, _, body = text.partition("\n")
+        name = heading.strip().rstrip(":").lower()
+        if name != CONTINUED:
+            skipping = name in FRONT_MATTER or "latest version of this document" in body
+        if skipping:
+            continue
+        if NUMBERED_HEADING.match(heading.strip()) and not heading.strip().endswith(":"):
+            section = heading.strip()
+        elif section:
+            text = f"{section} > {text}"
+        kept.append((i, text))
+    return kept
+
+
 def ingest(path_str: str, board_id: str | None = None) -> None:
     path = resolve_path(path_str)
     doc = convert(path)
 
     chunker = get_chunker()
     chunks = list(chunker.chunk(dl_doc=doc))
-    texts = [chunker.contextualize(chunk=c) for c in chunks]  # includes heading path
+    prepared = prepare_chunks([chunker.contextualize(chunk=c) for c in chunks])
+    chunks = [chunks[i] for i, _ in prepared]
+    texts = [text for _, text in prepared]
     if not texts:
         print("No text extracted.")
         return
