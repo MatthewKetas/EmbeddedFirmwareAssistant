@@ -1,4 +1,5 @@
-"""Show where the passages that answer each Milestone 1 prompt rank in retrieval.
+"""Show where the passages that answer each Milestone 1 prompt rank in retrieval,
+by vectors alone and merged with keyword ranking.
 
 Needs only the embedding model and the Qdrant library, no chat model.
 Stop rag.py first: both open the same on-disk Qdrant library.
@@ -8,6 +9,7 @@ Stop rag.py first: both open the same on-disk Qdrant library.
 """
 import argparse
 import re
+import time
 
 import rag
 from bench import load_prompts
@@ -59,20 +61,33 @@ def main() -> None:
     try:
         print(f"Library sources: {', '.join(rag.list_sources()) or '(empty)'}\n")
         for pid, question in load_prompts().items():
-            hits = rag.retrieve(question, None, args.board)
-            ranks, duplicates = rank_targets(hits, TARGETS[pid], top_n)
-            print(f"=== {pid}: {duplicates} of the top {top_n} chunks duplicate an earlier one")
-            for name, rank in ranks.items():
-                where = f"rank {rank}" if rank else f"not in top {args.depth}"
-                note = "" if rank and rank <= top_n else "   <- not sent to the model"
-                print(f"  {name:42} {where}{note}")
-            # First line of each chunk: Docling puts the heading path there, which shows front matter.
-            for rank, h in enumerate(hits[:top_n], 1):
+            # The same question ranked by vectors alone, then merged with keyword ranking.
+            results = {}
+            for hybrid in (False, True):
+                rag.HYBRID_SEARCH = hybrid
+                start = time.monotonic()
+                hits = rag.retrieve(question, None, args.board)
+                results[hybrid] = hits, time.monotonic() - start, *rank_targets(hits, TARGETS[pid], top_n)
+            (_, t_vector, ranks_vector, dup_vector), (hybrid_hits, t_hybrid, ranks_hybrid, dup_hybrid) = \
+                results[False], results[True]
+            print(f"=== {pid}: vectors {t_vector:.1f}s, with keywords {t_hybrid:.1f}s; "
+                  f"duplicates in the top {top_n}: {dup_vector} / {dup_hybrid}")
+            for name in ranks_vector:
+                pair = (ranks_vector[name], ranks_hybrid[name])
+                cells = [f"{r}" if r else f">{args.depth}" for r in pair]
+                sent = tuple(r is not None and r <= top_n for r in pair)
+                note = {(False, True): "   <- now sent", (True, False): "   <- no longer sent",
+                        (False, False): "   <- not sent either way"}.get(sent, "")
+                print(f"  {name:42} rank {cells[0]:>4} -> {cells[1]:>4}{note}")
+            # First line of each chunk: Docling puts the heading path there.
+            print(f"  top {top_n} with keywords:")
+            for rank, h in enumerate(hybrid_hits[:top_n], 1):
                 first = " ".join(h.payload["text"].split("\n", 1)[0].split())[:70]
                 print(f"    {rank:2}. {rag.source_label(h.payload):22} {first}")
             print()
     finally:
         rag.TOP_N_CHUNKS = top_n
+        rag.HYBRID_SEARCH = False
         rag.teardown()
 
 
