@@ -41,7 +41,8 @@ The following values describe the current source code. I cannot assume they were
 | Embedding model | Qwen3-Embedding-8B-GGUF |
 | Embedding dimensions | 4,096 |
 | Vector similarity | Cosine |
-| Retrieved passages per question | Up to 10; code passages are trimmed to a 4,000-token budget |
+| Retrieved passages per question | Up to 10 distinct passages, ranked by vector similarity merged with keyword (BM25) ranking; code passages are trimmed to a 4,000-token budget |
+| Indexing | Front matter (contents, lists of tables and figures, revision history, back-matter links) is skipped; generic headings such as "Feature List" carry their section name |
 | Chunk token budget | 768, measured with the Qwen embedding tokenizer |
 | Requested chat context | 16,384 tokens for each chat model |
 | Generation settings | Temperature 1.0; top_p 0.9; top_k 40 |
@@ -106,6 +107,26 @@ I checked all 77 saved answers against key facts that I located in the datasheet
 | Gemma-4-26B-A4B-it, with and without MTP | 45/55 (82%) | 2 | not run | not run |
 
 Without retrieval, every model invented datasheet values, such as a 200 mA or 1.8 mA LDO limit, a 2.7-2.95 V minimum supply, or eFuse names the datasheet does not contain. With retrieval, the models were close, so I chose by speed. Most remaining gaps were retrieval misses shared by every model: no answer gave the 50 µs power-up time in Table 2-4 (p.19), only one listed the four 64-bit general-purpose timers (p.31), and six answers said the datasheet does not confirm 400 Kbit/s I2C although p.37 states it.
+
+## My retrieval improvements
+
+I checked where the passages that answer each Milestone 1 prompt rank with [retrieval_check.py](retrieval_check.py), which needs only the embedding model. Three problems kept answers from the facts above:
+
+- **Duplicate chunks.** The library held the datasheet as both `ESP32.pdf` and `esp32.pdf`, because on Windows `/add esp32.pdf` opens `ESP32.pdf` but the typed name became the source. Five of the ten chunks sent per question were duplicates. `/add` now uses the name on disk and replaces copies stored under other case, and retrieval skips identical chunks.
+- **Front matter.** The contents, lists of tables and figures, revision history and back-matter links matched almost any question and took up to seven of the ten slots. They are no longer indexed (22 of 218 ESP32 chunks).
+- **Missing section names and exact terms.** A chunk headed only "Feature List" never mentioned I2C, and embeddings ranked passages low even when they repeated the question's exact terms, such as "400 Kbit/s". Generic headings now carry their section, and a keyword (BM25) ranking is merged with the vector ranking.
+
+| Passage (ESP32.pdf page) | Rank before | Rank after |
+|---|---|---|
+| P1: RSA 4,096-bit limit (p.32) | 2 | 1 |
+| P2: I2C Fast mode 400 Kbit/s (p.37) | 37 | 8 |
+| P3: power-up time tSTBL 50 µs (p.19) | outside the top 10 | 6 |
+| P5: four general-purpose timers (p.31) | 11 | 2 |
+| P2: UART pins via the GPIO Matrix (p.37) | not in the top 50 | 30 |
+
+Searching each sentence of the question separately made ranking worse, because the instruction sentences shared by every prompt pulled the same generic chunks to the top, so I removed it. The keyword ranking added about 0.1 s per question.
+
+In a bench run with the ESP32 board selected, both chosen models stated the three facts that no earlier configuration had covered: the 400 Kbit/s I2C mode, the 50 µs power-up time and the four general-purpose timers. Gemma-4-E4B took a median 13.8 s per answer and Qwen3.6-35B-A3B 48.2 s. I read these ten answers myself rather than with the fact-check script. They still contained errors that retrieval does not explain: Gemma labelled the SPI flash boot setting as SDIO download boot, and Qwen gave U0TXD as GPIO3 instead of GPIO1 and called U0TXD a strapping pin.
 
 ## My evidence
 
