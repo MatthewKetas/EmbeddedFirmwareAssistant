@@ -1,11 +1,12 @@
 """Show where the passages that answer each Milestone 1 prompt rank in retrieval,
-by vectors alone and merged with keyword ranking.
+under two or more retrieval settings (default: vectors alone, then merged with keyword ranking).
 
 Needs only the embedding model and the Qdrant library, no chat model.
 Stop rag.py first: both open the same on-disk Qdrant library.
 
     python RAG/retrieval_check.py --board esp-32
     python RAG/retrieval_check.py --depth 100
+    python RAG/retrieval_check.py --board esp-32 --compare keywords b0.3 b0
 """
 import argparse
 import re
@@ -18,7 +19,10 @@ from bench import load_prompts
 # pushed the I2C speed and power-up timing out of the top 10 and brought in neither UART passage.
 SETTINGS = {
     "vectors": {"HYBRID_SEARCH": False},
-    "keywords": {"HYBRID_SEARCH": True},
+    "keywords": {"HYBRID_SEARCH": True, "KEYWORD_B": 0.75},
+    # Less BM25 length penalty, for long table chunks such as the pin overview.
+    "b0.3": {"HYBRID_SEARCH": True, "KEYWORD_B": 0.3},
+    "b0": {"HYBRID_SEARCH": True, "KEYWORD_B": 0.0},
 }
 # A passage counts as found when a retrieved chunk's text matches its pattern.
 # Patterns follow the datasheet's wording (ESP32.pdf page in the name).
@@ -63,39 +67,48 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--depth", type=int, default=50, help="how many chunks to rank (default 50)")
     parser.add_argument("--board", help="board id, as in rag.py's /board")
-    parser.add_argument("--compare", nargs=2, choices=list(SETTINGS), default=["vectors", "keywords"],
-                        metavar=("BEFORE", "AFTER"), help=f"two of: {', '.join(SETTINGS)}")
+    parser.add_argument("--compare", nargs="+", choices=list(SETTINGS), default=["vectors", "keywords"],
+                        help=f"two or more of: {', '.join(SETTINGS)}; the first is the baseline")
     args = parser.parse_args()
+    if len(args.compare) < 2:
+        parser.error("--compare needs at least two settings")
 
     rag.client = rag.OpenAI(base_url=rag.BASE_URL, api_key=rag.API_KEY)
     rag.qdrant = rag.QdrantClient(path=rag.QDRANT_PATH)
     top_n, rag.TOP_N_CHUNKS = rag.TOP_N_CHUNKS, args.depth
-    defaults = {name: getattr(rag, name) for name in SETTINGS["vectors"]}
-    before, after = args.compare
+    defaults = {name: getattr(rag, name) for setting in SETTINGS.values() for name in setting}
+    baseline, last = args.compare[0], args.compare[-1]
     try:
         print(f"Library sources: {', '.join(rag.list_sources()) or '(empty)'}\n")
         for pid, question in load_prompts().items():
             results = {}
-            for setting in (before, after):
+            for setting in args.compare:
+                for name, value in defaults.items():
+                    setattr(rag, name, value)
                 for name, value in SETTINGS[setting].items():
                     setattr(rag, name, value)
                 start = time.monotonic()
                 hits = rag.retrieve(question, None, args.board)
                 results[setting] = hits, time.monotonic() - start, *rank_targets(hits, TARGETS[pid], top_n)
-            (_, t_before, ranks_before, dup_before), (after_hits, t_after, ranks_after, dup_after) = \
-                results[before], results[after]
-            print(f"=== {pid}: {before} {t_before:.1f}s, {after} {t_after:.1f}s; "
-                  f"duplicates in the top {top_n}: {dup_before} / {dup_after}")
-            for name in ranks_before:
-                pair = (ranks_before[name], ranks_after[name])
-                cells = [f"{r}" if r else f">{args.depth}" for r in pair]
-                sent = tuple(r is not None and r <= top_n for r in pair)
-                note = {(False, True): "   <- now sent", (True, False): "   <- no longer sent",
-                        (False, False): "   <- not sent either way"}.get(sent, "")
-                print(f"  {name:42} rank {cells[0]:>4} -> {cells[1]:>4}{note}")
+            times = ", ".join(f"{s} {results[s][1]:.1f}s" for s in args.compare)
+            dups = " / ".join(str(results[s][3]) for s in args.compare)
+            print(f"=== {pid}: {times}; duplicates in the top {top_n}: {dups}")
+            print(f"  {'':42} {' '.join(f'{s:>8}' for s in args.compare)}")
+            for name in results[baseline][2]:
+                ranks = [results[s][2][name] for s in args.compare]
+                cells = [f"{r}" if r else f">{args.depth}" for r in ranks]
+                sent = [r is not None and r <= top_n for r in ranks]
+                note = ""
+                if not sent[0] and any(sent[1:]):
+                    note = "   <- now sent"
+                elif sent[0] and not all(sent[1:]):
+                    note = "   <- no longer sent"
+                elif not any(sent):
+                    note = "   <- not sent in any"
+                print(f"  {name:42} {' '.join(f'{c:>8}' for c in cells)}{note}")
             # First line of each chunk: Docling puts the heading path there.
-            print(f"  top {top_n} with {after}:")
-            for rank, h in enumerate(after_hits[:top_n], 1):
+            print(f"  top {top_n} with {last}:")
+            for rank, h in enumerate(results[last][0][:top_n], 1):
                 first = " ".join(h.payload["text"].split("\n", 1)[0].split())[:70]
                 print(f"    {rank:2}. {rag.source_label(h.payload):22} {first}")
             print()

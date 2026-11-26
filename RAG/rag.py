@@ -71,6 +71,8 @@ TOP_N_CHUNKS = 10                                # chunks sent to the chat model
 # the I2C 400 Kbit/s passage from rank 23 to 8 and the power-up timing table from 14 to 6,
 # dropped nothing from the top 10, and added about 0.1 s per question.
 HYBRID_SEARCH = True
+# BM25 length normalisation for the keyword ranking: 1 marks long chunks fully down, 0 not at all.
+KEYWORD_B = 0.75
 EMBED_BATCH = 16
 MAX_CHARS = 100_000                         # only used by /file (whole-document paste)
 
@@ -431,8 +433,9 @@ def ingest_code(path_str: str, board_id: str | None = None) -> str:
 WORD = re.compile(r"[a-z0-9_]+")
 
 
-def keyword_rank(question: str, points, k1: float = 1.5, b: float = 0.75) -> list:
+def keyword_rank(question: str, points, k1: float = 1.5, b: float | None = None) -> list:
     """Points sharing words with the question, best BM25 score first; points sharing none are left out."""
+    b = KEYWORD_B if b is None else b
     docs = [WORD.findall(p.payload["text"].lower()) for p in points]
     if not docs:
         return []
