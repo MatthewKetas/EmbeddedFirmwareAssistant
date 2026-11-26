@@ -69,6 +69,27 @@ class RetrievalTests(unittest.TestCase):
                 hits = rag.retrieve("timers")
         self.assertEqual(sorted(h.payload["text"] for h in hits), ["general-purpose timers", "watchdog timers"])
 
+    def test_keyword_search_brings_in_a_chunk_that_shares_rare_words(self):
+        self.chunks = ["Feature List - Fast mode (400 Kbit/s)", "board overview", "flash pins", "boot modes"]
+        question = "Which bus mode supports 400 Kbit/s?"
+        # The I2C speed chunk sits far from the question in vector space, as on the real datasheet.
+        vector = lambda text: [0.0, 1.0] if "400" in text and not text.startswith("Instruct:") else [1.0, 0.0]
+        with patch.object(rag, "embed", side_effect=lambda texts: [vector(t) for t in texts]):
+            rag.ingest("ESP32.pdf")
+            with patch.object(rag, "TOP_N_CHUNKS", 2):
+                plain = [h.payload["text"] for h in rag.retrieve(question)]
+                with patch.object(rag, "HYBRID_SEARCH", True):
+                    hybrid = [h.payload["text"] for h in rag.retrieve(question)]
+        self.assertNotIn("Feature List - Fast mode (400 Kbit/s)", plain)
+        self.assertEqual(hybrid[0], "Feature List - Fast mode (400 Kbit/s)")
+
+    def test_keyword_rank_weights_rare_words_and_skips_chunks_with_none(self):
+        points = [SimpleNamespace(id=i, payload={"text": t}) for i, t in enumerate([
+            "Pin Assignment: the pins can be chosen from any GPIO", "Feature List - Fast mode (400 Kbit/s)",
+            "the the the bus", "Clocks and Timers"])]
+        ranked = [p.id for p in rag.keyword_rank("a shared 400 Kbit/s I2C bus for the sensors", points)]
+        self.assertEqual(ranked, [1, 2, 0])   # "Clocks and Timers" shares no word with the question
+
 
 class PrepareChunksTests(unittest.TestCase):
     # First lines and bodies as Docling produced them for ESP32.pdf.

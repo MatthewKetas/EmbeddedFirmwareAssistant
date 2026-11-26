@@ -1,5 +1,6 @@
 import hashlib
 import importlib.util
+import math
 import os
 import re
 import shlex
@@ -7,6 +8,7 @@ import signal
 import sys
 import time
 import uuid
+from collections import Counter
 from functools import cache
 from itertools import chain, islice
 from pathlib import Path
@@ -64,6 +66,10 @@ TOP_K = 40
 QDRANT_PATH = str(SCRIPT_DIR / "qdrant_data")   # on-disk vector library, no server needed
 COLLECTION = "docs"
 TOP_N_CHUNKS = 10                                # chunks sent to the chat model per question
+# Also rank chunks by shared words (BM25) and merge that with the vector ranking. Embeddings
+# missed passages that repeat the question's exact terms, e.g. "400 Kbit/s" for I2C.
+# Off until retrieval_check.py shows it helps.
+HYBRID_SEARCH = False
 EMBED_BATCH = 16
 MAX_CHARS = 100_000                         # only used by /file (whole-document paste)
 
@@ -396,6 +402,30 @@ def ingest_code(path_str: str, board_id: str | None = None) -> str:
     print(f"Indexed {count} code chunks from {source}\n")
     return source
 
+WORD = re.compile(r"[a-z0-9_]+")
+
+
+def keyword_rank(question: str, points, k1: float = 1.5, b: float = 0.75) -> list:
+    """Points sharing words with the question, best BM25 score first; points sharing none are left out."""
+    docs = [WORD.findall(p.payload["text"].lower()) for p in points]
+    if not docs:
+        return []
+    average = sum(map(len, docs)) / len(docs)
+    df = Counter(word for doc in docs for word in set(doc))
+    words = set(WORD.findall(question.lower()))
+    scored = []
+    for point, doc in zip(points, docs):
+        tf = Counter(doc)
+        score = sum(
+            math.log(1 + (len(docs) - df[w] + 0.5) / (df[w] + 0.5))
+            * tf[w] * (k1 + 1) / (tf[w] + k1 * (1 - b + b * len(doc) / average))
+            for w in words if tf[w]
+        )
+        if score > 0:
+            scored.append((score, point))
+    return [point for _, point in sorted(scored, key=lambda pair: pair[0], reverse=True)]
+
+
 def retrieve(question: str, only: list[str] | None = None, board_id: str | None = None):
     if not qdrant.collection_exists(COLLECTION) or qdrant.count(COLLECTION).count == 0:
         return []
@@ -413,11 +443,20 @@ def retrieve(question: str, only: list[str] | None = None, board_id: str | None 
     if UNLOAD_AFTER_QUERY:
         unload_model(EMBED_MODEL)
     # Fetch extra so identical chunks (a file indexed twice, repeated boilerplate) do not use up slots.
-    res = qdrant.query_points(
-        COLLECTION, query=qvec, limit=TOP_N_CHUNKS * 3, query_filter=flt,
-    )
+    depth = TOP_N_CHUNKS * 3
+    candidates = qdrant.query_points(COLLECTION, query=qvec, limit=depth, query_filter=flt).points
+    if HYBRID_SEARCH:
+        # Reciprocal rank fusion: a chunk near the top of both rankings wins.
+        everything, _ = qdrant.scroll(COLLECTION, scroll_filter=flt, limit=100_000,
+                                      with_payload=True, with_vectors=False)
+        fused, by_id = Counter(), {}
+        for ranking in (candidates, keyword_rank(question, everything)[:depth]):
+            for rank, point in enumerate(ranking, 1):
+                fused[point.id] += 1 / (60 + rank)
+                by_id.setdefault(point.id, point)
+        candidates = sorted(by_id.values(), key=lambda point: fused[point.id], reverse=True)
     hits, seen = [], set()
-    for point in res.points:
+    for point in candidates:
         text = " ".join(point.payload["text"].split())
         if text not in seen:
             seen.add(text)
