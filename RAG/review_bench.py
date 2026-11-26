@@ -1,11 +1,12 @@
-"""Time the code model's reviews of small C files with planted bugs, with and without answer rules.
+"""Time the code model's reviews of small C files with planted bugs, under different system prompts.
 
 Each file in review_cases/ has known bugs, the most severe listed first. A bug counts as found when
 the review matches its pattern; the snippets are printed for a person to confirm. "Severe first"
-means the most severe bug is mentioned before the file's other planted bug.
+means the most severe bug is mentioned before the file's other planted bug. HELD_OUT files have
+bugs the review checklist does not name, to show whether it helps beyond the bugs it lists.
 Stop rag.py first if it is running: both talk to the same Lemonade server.
 
-    python RAG/review_bench.py --rules both --runs 3 --label review
+    python RAG/review_bench.py --prompts none checklist --runs 3 --label checklist
 """
 import argparse
 import json
@@ -20,9 +21,11 @@ import rag
 CASES_DIR = rag.SCRIPT_DIR / "review_cases"
 RESULTS = rag.SCRIPT_DIR / "bench_results"
 QUESTION = "Review this code for bugs."
-# The rules tested as "on": Gemma's answer rules plus the code-review rule Qwen had until this bench.
+# The rules Qwen had before this bench: Gemma's answer rules plus a code-review rule.
 REVIEW_RULE = ("\nFor code reviews: list findings most severe first, each with file, line and a one-line fix; "
                "put real bugs before style nits.")
+SYSTEM_PROMPTS = {"none": "", "rules": rag.ANSWER_RULES + REVIEW_RULE, "checklist": rag.REVIEW_CHECKLIST}
+HELD_OUT = {"cmd_parser.c", "status_poll.c"}
 FLAGS = re.I | re.S
 # file -> bugs, most severe first: (name, text on the bug's line, pattern a review that found it matches[,
 # pattern that clears the match when found nearby, e.g. a review calling the planted bug correct]).
@@ -54,6 +57,21 @@ BUGS = {
         ("elapsed_since returns 0 when the counter wraps", "if (now < start) {",
          r"(wrap|overflow|roll ?over).{0,120}(now|start|tick|millis|elapsed)|(now|start|tick_ms|elapsed_since).{0,120}(wrap|roll ?over)",
          r"(?<!not )(?<!n't )\bhandles?\b[^.]{0,40}(wrap|overflow)"),
+    ],
+    # Held out: the checklist names none of these, except that a uint8_t counter is a kind of truncation.
+    "cmd_parser.c": [
+        ("run_command returns a pointer to its local reply buffer", "return reply;",
+         r"dangling|(return|pointer)\w*.{0,60}(local|stack|out of scope)|(local|stack).{0,60}(returned|pointer|out of scope)"
+         r"|static char reply|goes out of scope|after (the function|it) returns"),
+        ("CMD_LED_ON falls through into CMD_LED_OFF: no break", 'snprintf(reply, sizeof reply, "led on");',
+         r"fall[- ]?through|falls through|missing\W{0,3}break|no\W{0,3}break|without (a )?\W{0,2}break"),
+    ],
+    "status_poll.c": [
+        ("== binds tighter than &: tests bit 0, not STATUS_READY", "return (*PERIPH_STATUS & STATUS_READY == STATUS_READY);",
+         r"precedence|binds (more )?tight|evaluated (first|before)|\(\s*\*?PERIPH_STATUS\s*&\s*STATUS_READY\s*\)\s*==|STATUS_READY == STATUS_READY\W{0,6}(evaluates|is|becomes|yields) (to )?\W{0,2}(1|true)\b"),
+        ("uint8_t i wraps at 256, so a count above 255 loops forever", "for (uint8_t i = 0; i < count; i++) {",
+         r"uint8_t\W{0,3}\s*(i\b|loop|counter|index).{0,160}(255|256|wrap|overflow|infinite|forever|never)"
+         r"|(255|256).{0,120}uint8_t"),
     ],
 }
 
@@ -93,12 +111,14 @@ def snippets(answer: str, name: str, found: list[str]) -> list[tuple[str, str]]:
 
 
 def summarize(rows: list[dict]) -> list[tuple]:
-    """(rules, reviews, bugs found, bugs total, severe first, median tokens, median total s) per rules setting."""
+    """(prompt, files, reviews, bugs found, bugs total, severe first, median tokens, median total s)
+    per system prompt, for the checked files and the held-out files apart."""
     out = []
-    for rules in dict.fromkeys(r["rules"] for r in rows):
-        group = [r for r in rows if r["rules"] == rules]
-        out.append((rules, len(group), sum(len(r["found"]) for r in group), sum(r["of"] for r in group),
-                    sum(r["severe_first"] for r in group),
+    groups = dict.fromkeys((r["prompt"], r["case"] in HELD_OUT) for r in rows)
+    for prompt, held in groups:   # first-seen order: checked files come before held-out ones
+        group = [r for r in rows if r["prompt"] == prompt and (r["case"] in HELD_OUT) == held]
+        out.append((prompt, "held out" if held else "checked", len(group), sum(len(r["found"]) for r in group),
+                    sum(r["of"] for r in group), sum(r["severe_first"] for r in group),
                     statistics.median(r.get("completion_tokens") or 0 for r in group),
                     statistics.median(r.get("total_s") or 0 for r in group)))
     return out
@@ -106,7 +126,8 @@ def summarize(rows: list[dict]) -> list[tuple]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--rules", choices=["on", "off", "both"], default="both")
+    parser.add_argument("--prompts", nargs="+", choices=list(SYSTEM_PROMPTS), default=["none", "checklist"],
+                        help="system prompts to compare: none, the old rules, or the review checklist")
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--cases", nargs="+", help="file names in review_cases/ (default: all)")
     parser.add_argument("--label", default="review")
@@ -114,7 +135,6 @@ def main() -> None:
     args = parser.parse_args()
 
     cases = args.cases or list(BUGS)
-    settings = {"on": [True], "off": [False], "both": [True, False]}[args.rules]
     RESULTS.mkdir(exist_ok=True)
     out = RESULTS / f"{time.strftime('%Y%m%d-%H%M%S')}-{args.label}.jsonl"
     print(f"Reviews go to {out}")
@@ -122,15 +142,15 @@ def main() -> None:
     default_rules = rag.system_prompt
     rows = []
     try:
-        for rules in settings:
-            rag.system_prompt = (lambda model: rag.ANSWER_RULES + REVIEW_RULE) if rules else (lambda model: "")
+        for prompt_name in args.prompts:
+            rag.system_prompt = lambda model, text=SYSTEM_PROMPTS[prompt_name]: text
             for name in cases:
                 prompt = rag.build_rag_prompt(QUESTION, [case_hit(name)])
                 for run in range(1, args.runs + 1):
-                    print(f"=== rules {'on' if rules else 'off'} | {name} run {run} ===", flush=True)
+                    print(f"=== {prompt_name} | {name} run {run} ===", flush=True)
                     reply, stats = rag.stream_reply([{"role": "user", "content": prompt}], rag.CODE_MODEL,
                                                     echo=args.show_answers)
-                    row = {"label": args.label, "rules": rules, "case": name, "run": run,
+                    row = {"label": args.label, "prompt": prompt_name, "case": name, "run": run,
                            **score(reply, name), **stats, "answer": reply}
                     rows.append(row)
                     with out.open("a", encoding="utf-8") as f:
@@ -141,15 +161,15 @@ def main() -> None:
         rag.unload_model(rag.CODE_MODEL)
 
     print(f"\nSaved {len(rows)} reviews to {out}\n")
-    print("| rules | reviews | planted bugs found | most severe bug first | median answer tokens | median total s |")
-    print("|---|---|---|---|---|---|")
-    for rules, n, found, total, first, tokens, seconds in summarize(rows):
-        print(f"| {'on' if rules else 'off'} | {n} | {found}/{total} ({100 * found / total:.0f}%) | "
+    print("| system prompt | files | reviews | planted bugs found | most severe bug first | median answer tokens | median total s |")
+    print("|---|---|---|---|---|---|---|")
+    for prompt_name, files, n, found, total, first, tokens, seconds in summarize(rows):
+        print(f"| {prompt_name} | {files} | {n} | {found}/{total} ({100 * found / total:.0f}%) | "
               f"{first}/{n} | {tokens:.0f} | {seconds:.1f} |")
     print("\nTimes include prefill; runs 2-3 of a file reuse the cached prompt.")
     print("\nMatched bugs (pattern matches: confirm each one), and bugs missed:")
     for row in rows:
-        tag = f"rules {'on' if row['rules'] else 'off'} {row['case']} run {row['run']}"
+        tag = f"{row['prompt']} {row['case']} run {row['run']}"
         for bug, text in snippets(row["answer"], row["case"], row["found"]):
             line = bug_line(row["case"], next(a for b, a, *_ in BUGS[row["case"]] if b == bug))
             print(f"- {tag}: found '{bug}' (line {line})\n    ...{text}...")

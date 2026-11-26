@@ -100,16 +100,18 @@ class SpeedTests(unittest.TestCase):
         self.assertNotIn("secret answer", out.getvalue())
         self.assertIn(f"[{rag.LEXICAL_MODEL} | load", out.getvalue())   # the stats line still prints
 
-    def test_answer_rules_go_to_gemma_and_no_system_message_to_the_code_model(self):
+    def test_answer_rules_go_to_gemma_and_the_review_checklist_to_the_code_model(self):
         self.reply(rag.LEXICAL_MODEL, [chunk(content="a")])
         sent = self.client.chat.completions.create.call_args.kwargs["messages"]
         self.assertEqual(sent[0]["role"], "system")
         self.assertIn("Lead with the direct answer", sent[0]["content"])
         self.assertEqual(sent[1:], [{"role": "user", "content": "q"}])
-        # The rules cut Qwen's planted-bug finds from 17 to 10 of 24 in review_bench.py.
+        # The rules cut Qwen's planted-bug finds from 17 to 10 of 24 in review_bench.py; it gets a checklist.
         self.reply(rag.CODE_MODEL, [chunk(content="a")])
-        self.assertEqual(self.client.chat.completions.create.call_args.kwargs["messages"],
-                         [{"role": "user", "content": "q"}])
+        sent = self.client.chat.completions.create.call_args.kwargs["messages"]
+        self.assertEqual(sent[0], {"role": "system", "content": rag.REVIEW_CHECKLIST})
+        self.assertNotIn("what it lacks", sent[0]["content"])
+        self.assertIn("full or empty", sent[0]["content"])
 
     def test_rules_ask_for_the_key_values_and_set_no_length_cap(self):
         # A "briefly ... under 350 words" version cost 9 points of key facts in the rules bench.
@@ -121,7 +123,8 @@ class SpeedTests(unittest.TestCase):
 
     def test_rules_stay_short(self):
         # Small models follow a few rules better than a long list, and every prompt carries them.
-        self.assertLess(len(rag.system_prompt(rag.LEXICAL_MODEL).split()), 130)
+        for model in (rag.LEXICAL_MODEL, rag.CODE_MODEL):
+            self.assertLess(len(rag.system_prompt(model).split()), 130)
 
     def test_load_error_shows_lemonade_message(self):
         # A mistyped model name used to surface only as "404 Not Found".

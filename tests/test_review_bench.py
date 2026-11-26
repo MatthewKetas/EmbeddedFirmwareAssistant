@@ -13,6 +13,7 @@ import review_bench  # noqa: E402
 class ReviewBenchTests(unittest.TestCase):
     def test_every_case_file_exists_and_each_bug_line_is_found(self):
         self.assertEqual(sorted(review_bench.BUGS), sorted(p.name for p in review_bench.CASES_DIR.glob("*.c")))
+        self.assertLessEqual(review_bench.HELD_OUT, set(review_bench.BUGS))
         for name, bugs in review_bench.BUGS.items():
             for bug, anchor, *_ in bugs:
                 with self.subTest(bug=bug):
@@ -81,14 +82,38 @@ class ReviewBenchTests(unittest.TestCase):
             with self.subTest(answer=answer):
                 self.assertIn(review_bench.BUGS[name][index][0], review_bench.score(answer, name)["found"])
 
-    def test_summary_groups_by_rules_setting(self):
-        rows = [
-            {"rules": True, "found": ["a", "b"], "of": 2, "severe_first": True, "completion_tokens": 400, "total_s": 10.0},
-            {"rules": True, "found": ["a"], "of": 2, "severe_first": False, "completion_tokens": 600, "total_s": 14.0},
-            {"rules": False, "found": [], "of": 2, "severe_first": False, "completion_tokens": 900, "total_s": 20.0},
-        ]
-        self.assertEqual(review_bench.summarize(rows), [(True, 2, 3, 4, 1, 500, 12.0), (False, 1, 0, 2, 0, 900, 20.0)])
+    def test_quoting_the_held_out_code_is_not_a_finding(self):
+        quote = ("`return (*PERIPH_STATUS & STATUS_READY == STATUS_READY);` [review_cases/status_poll.c:1-23]. "
+                 "The local reply buffer is 32 bytes. The while loop can wait forever if the peripheral never becomes ready.")
+        for name in ("status_poll.c", "cmd_parser.c"):
+            with self.subTest(name=name):
+                self.assertEqual(review_bench.score(quote, name)["found"], [])
 
+    def test_summary_groups_by_prompt_and_keeps_held_out_files_apart(self):
+        rows = [
+            {"prompt": "none", "case": "adc_average.c", "found": ["a", "b"], "of": 2, "severe_first": True,
+             "completion_tokens": 400, "total_s": 10.0},
+            {"prompt": "none", "case": "uart_ring.c", "found": ["a"], "of": 2, "severe_first": False,
+             "completion_tokens": 600, "total_s": 14.0},
+            {"prompt": "none", "case": "cmd_parser.c", "found": [], "of": 2, "severe_first": False,
+             "completion_tokens": 900, "total_s": 20.0},
+        ]
+        self.assertEqual(review_bench.summarize(rows), [("none", "checked", 2, 3, 4, 1, 500, 12.0),
+                                                        ("none", "held out", 1, 0, 2, 0, 900, 20.0)])
+
+    def test_held_out_bugs_are_matched_and_not_named_by_the_checklist(self):
+        cases = [
+            ("cmd_parser.c", "run_command returns `reply`, a local array that goes out of scope: a dangling pointer.", 0),
+            ("cmd_parser.c", "case CMD_LED_ON is missing a `break`, so it falls through to CMD_LED_OFF.", 1),
+            ("status_poll.c", "Operator precedence: `==` is evaluated before `&`, so this tests bit 0.", 0),
+            ("status_poll.c", "`uint8_t i` can never reach a count above 255, so the loop never ends.", 1),
+        ]
+        for name, answer, index in cases:
+            with self.subTest(answer=answer):
+                self.assertIn(review_bench.BUGS[name][index][0], review_bench.score(answer, name)["found"])
+        checklist = review_bench.rag.REVIEW_CHECKLIST.lower()
+        for word in ("scope", "dangling", "break", "fall", "precedence", "operator"):
+            self.assertNotIn(word, checklist)
 
 class NoRulesTests(unittest.TestCase):
     def test_no_system_message_is_sent_when_the_rules_are_off(self):

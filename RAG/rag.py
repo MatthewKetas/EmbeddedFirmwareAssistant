@@ -578,10 +578,23 @@ ANSWER_RULES = (
 )
 
 
+# Qwen does not get ANSWER_RULES: with them its code reviews found 10 of 24 planted bugs, against
+# 17 without, and often opened with "No bugs found" (RAG/review_bench.py). Without any rules it
+# never noticed a ring buffer that has no full check, so it gets this checklist instead.
+REVIEW_CHECKLIST = (
+    "When reviewing code, check each function for:\n"
+    "- array and buffer bounds, including off-by-one indices and what happens when a buffer or queue is full or empty;\n"
+    "- integer overflow, truncation and division by zero;\n"
+    "- return values that are ignored;\n"
+    "- data shared with interrupts or other threads (volatile, atomic access);\n"
+    "- counters and timers that wrap around.\n"
+    "Report every real bug you find, most severe first, with file, line and fix. "
+    "Only report a bug you have traced through the code."
+)
+
+
 def system_prompt(model: str) -> str:
-    # Only Gemma gets the rules. With them, Qwen's code reviews found 10 of 24 planted bugs, against
-    # 17 without, and often opened with "No bugs found" (RAG/review_bench.py).
-    return ANSWER_RULES if model == LEXICAL_MODEL else ""
+    return ANSWER_RULES if model == LEXICAL_MODEL else REVIEW_CHECKLIST
 
 
 def stream_reply(messages: list, model: str, echo: bool = True) -> tuple[str, dict]:
