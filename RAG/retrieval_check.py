@@ -6,7 +6,6 @@ Stop rag.py first: both open the same on-disk Qdrant library.
 
     python RAG/retrieval_check.py --board esp-32
     python RAG/retrieval_check.py --depth 100
-    python RAG/retrieval_check.py --board esp-32 --compare keywords b0.3 b0
 """
 import argparse
 import re
@@ -15,15 +14,14 @@ import time
 import rag
 from bench import load_prompts
 
-# Settings to compare. Retrieving per question sentence was tried and removed: on these prompts it
+# Settings to compare; add one here to test it. Retrieving per question sentence was tried and removed: on these prompts it
 # pushed the I2C speed and power-up timing out of the top 10 and brought in neither UART passage.
 SETTINGS = {
     "vectors": {"HYBRID_SEARCH": False},
-    "keywords": {"HYBRID_SEARCH": True, "KEYWORD_B": 0.75},
-    # Less BM25 length penalty, for long table chunks such as the pin overview.
-    "b0.3": {"HYBRID_SEARCH": True, "KEYWORD_B": 0.3},
-    "b0": {"HYBRID_SEARCH": True, "KEYWORD_B": 0.0},
+    "keywords": {"HYBRID_SEARCH": True},
 }
+# A smaller BM25 length penalty (b = 0.3 and 0 instead of 0.75) was also tried and removed: the
+# U0TXD pin table only rose from rank 36 to 27, UART pin routing fell, and b = 0 dropped the I2C speed.
 # A passage counts as found when a retrieved chunk's text matches its pattern.
 # Patterns follow the datasheet's wording (ESP32.pdf page in the name).
 TARGETS = {

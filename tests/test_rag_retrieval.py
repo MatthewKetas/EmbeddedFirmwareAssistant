@@ -90,18 +90,6 @@ class RetrievalTests(unittest.TestCase):
         ranked = [p.id for p in rag.keyword_rank("a shared 400 Kbit/s I2C bus for the sensors", points)]
         self.assertEqual(ranked, [1, 2, 0])   # "Clocks and Timers" shares no word with the question
 
-    def test_lower_keyword_b_stops_marking_long_chunks_down(self):
-        # Like the pin overview: a long table that names U0TXD once, against a short chunk that does too.
-        long_table = SimpleNamespace(id=0, payload={"text": "U0TXD GPIO1 " + "VDDA LNA_IN CHIP_PU " * 60})
-        short_note = SimpleNamespace(id=1, payload={"text": "U0TXD printing control"})
-        filler = [SimpleNamespace(id=i, payload={"text": f"timer {i}"}) for i in range(2, 6)]
-        points = [long_table, short_note] + filler
-        question = "Identify the U0TXD and GPIO1 pin mapping"
-        with patch.object(rag, "KEYWORD_B", 0.75):
-            self.assertEqual([p.id for p in rag.keyword_rank(question, points)], [1, 0])
-        with patch.object(rag, "KEYWORD_B", 0.0):
-            self.assertEqual([p.id for p in rag.keyword_rank(question, points)], [0, 1])
-
     def test_rag_prompt_forbids_values_from_general_knowledge(self):
         # Qwen once gave U0TXD as GPIO3 "in typical ESP32 pinouts" when the pin table was not retrieved.
         hit = SimpleNamespace(payload={"source": "ESP32.pdf", "page": 23, "text": "GPIO0 = 0"})
