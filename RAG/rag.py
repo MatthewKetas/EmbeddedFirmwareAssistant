@@ -64,10 +64,6 @@ TOP_K = 40
 QDRANT_PATH = str(SCRIPT_DIR / "qdrant_data")   # on-disk vector library, no server needed
 COLLECTION = "docs"
 TOP_N_CHUNKS = 10                                # chunks sent to the chat model per question
-# Also search with each sentence of the question and keep a chunk's best match. A multi-part
-# question as one vector ranks a passage that answers only one part low. Off until
-# retrieval_check.py shows it helps.
-SPLIT_QUERY = False
 EMBED_BATCH = 16
 MAX_CHARS = 100_000                         # only used by /file (whole-document paste)
 
@@ -235,8 +231,8 @@ def embed(texts: list[str]) -> list[list[float]]:
     return out
 
 
-def query_sentences(question: str) -> list[str]:
-    return [s for s in re.split(r"(?<=[.?!])\s+", question.strip()) if s]
+def embed_query(question: str) -> list[float]:
+    return embed([f"Instruct: {QUERY_TASK}\nQuery: {question}"])[0]
 
 
 def chunk_page(chunk):
@@ -413,21 +409,15 @@ def retrieve(question: str, only: list[str] | None = None, board_id: str | None 
             IsEmptyCondition(is_empty=PayloadField(key="board_id")),
         ]))
     flt = Filter(must=must) if must else None
-    queries = [question]
-    if SPLIT_QUERY and len(sentences := query_sentences(question)) > 1:
-        queries += sentences
-    vectors = embed([f"Instruct: {QUERY_TASK}\nQuery: {q}" for q in queries])
+    qvec = embed_query(question)
     if UNLOAD_AFTER_QUERY:
         unload_model(EMBED_MODEL)
-    best = {}
-    for vector in vectors:
-        # Fetch extra so identical chunks (a file indexed twice, repeated boilerplate) do not use up slots.
-        res = qdrant.query_points(COLLECTION, query=vector, limit=TOP_N_CHUNKS * 3, query_filter=flt)
-        for point in res.points:
-            if point.id not in best or point.score > best[point.id].score:
-                best[point.id] = point
+    # Fetch extra so identical chunks (a file indexed twice, repeated boilerplate) do not use up slots.
+    res = qdrant.query_points(
+        COLLECTION, query=qvec, limit=TOP_N_CHUNKS * 3, query_filter=flt,
+    )
     hits, seen = [], set()
-    for point in sorted(best.values(), key=lambda p: p.score, reverse=True):
+    for point in res.points:
         text = " ".join(point.payload["text"].split())
         if text not in seen:
             seen.add(text)

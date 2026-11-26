@@ -1,5 +1,4 @@
-"""Show where the passages that answer each Milestone 1 prompt rank in retrieval,
-searching the whole question and also sentence by sentence.
+"""Show where the passages that answer each Milestone 1 prompt rank in retrieval.
 
 Needs only the embedding model and the Qdrant library, no chat model.
 Stop rag.py first: both open the same on-disk Qdrant library.
@@ -9,7 +8,6 @@ Stop rag.py first: both open the same on-disk Qdrant library.
 """
 import argparse
 import re
-import time
 
 import rag
 from bench import load_prompts
@@ -61,33 +59,20 @@ def main() -> None:
     try:
         print(f"Library sources: {', '.join(rag.list_sources()) or '(empty)'}\n")
         for pid, question in load_prompts().items():
-            # The same question searched whole, then also sentence by sentence (rag.SPLIT_QUERY).
-            results = {}
-            for split in (False, True):
-                rag.SPLIT_QUERY = split
-                start = time.monotonic()
-                hits = rag.retrieve(question, None, args.board)
-                results[split] = hits, time.monotonic() - start, *rank_targets(hits, TARGETS[pid], top_n)
-            (whole, t_whole, ranks_whole, dup_whole), (split_hits, t_split, ranks_split, dup_split) = \
-                results[False], results[True]
-            print(f"=== {pid}: whole question {t_whole:.1f}s, with sentences "
-                  f"{t_split:.1f}s ({len(rag.query_sentences(question))} sentences); duplicates in the top "
-                  f"{top_n}: {dup_whole} / {dup_split}")
-            for name in ranks_whole:
-                cells = [f"{r}" if r else f">{args.depth}" for r in (ranks_whole[name], ranks_split[name])]
-                sent = [r is not None and r <= top_n for r in (ranks_whole[name], ranks_split[name])]
-                note = {(False, True): "   <- now sent", (True, False): "   <- no longer sent",
-                        (False, False): "   <- not sent either way"}.get(tuple(sent), "")
-                print(f"  {name:42} rank {cells[0]:>4} -> {cells[1]:>4}{note}")
-            # First line of each chunk: Docling puts the heading path there.
-            print(f"  top {top_n} with sentences:")
-            for rank, h in enumerate(split_hits[:top_n], 1):
+            hits = rag.retrieve(question, None, args.board)
+            ranks, duplicates = rank_targets(hits, TARGETS[pid], top_n)
+            print(f"=== {pid}: {duplicates} of the top {top_n} chunks duplicate an earlier one")
+            for name, rank in ranks.items():
+                where = f"rank {rank}" if rank else f"not in top {args.depth}"
+                note = "" if rank and rank <= top_n else "   <- not sent to the model"
+                print(f"  {name:42} {where}{note}")
+            # First line of each chunk: Docling puts the heading path there, which shows front matter.
+            for rank, h in enumerate(hits[:top_n], 1):
                 first = " ".join(h.payload["text"].split("\n", 1)[0].split())[:70]
                 print(f"    {rank:2}. {rag.source_label(h.payload):22} {first}")
             print()
     finally:
         rag.TOP_N_CHUNKS = top_n
-        rag.SPLIT_QUERY = False
         rag.teardown()
 
 
