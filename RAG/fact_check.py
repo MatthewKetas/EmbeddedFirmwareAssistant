@@ -13,6 +13,7 @@ import glob
 import json
 import re
 from collections import defaultdict
+from statistics import median
 from pathlib import Path
 
 FLAGS = re.I | re.S
@@ -100,12 +101,14 @@ def error_snippets(answer: str, prompt: str, names: list[str]) -> list[tuple[str
 
 
 def summarize(rows: list[dict]) -> list[tuple]:
-    """(label, model, rag, answers, facts stated, facts total, errors) per group, in first-seen order."""
+    """(label, model, rag, answers, facts stated, facts total, errors, median answer tokens) per group,
+    in first-seen order. Tokens do not depend on decode speed, so they compare answer length fairly."""
     groups = defaultdict(list)
     for row in rows:
         groups[(row["label"], row["model"], row["rag"])].append(row)
     return [(*key, len(group), sum(r["facts"] for r in group), sum(r["of"] for r in group),
-             sum(len(r["errors"]) for r in group)) for key, group in groups.items()]
+             sum(len(r["errors"]) for r in group),
+             median(r.get("tokens", 0) for r in group)) for key, group in groups.items()]
 
 
 def main() -> None:
@@ -124,14 +127,15 @@ def main() -> None:
             rows.append({"file": Path(path).name, "label": record.get("label", ""), "model": record["model"],
                          "rag": record["rag"], "prompt": record["prompt"], "run": record.get("run", 1),
                          "facts": len(facts), "of": len(names),
-                         "missing": [n for n in names if n not in facts], "errors": errors})
+                         "missing": [n for n in names if n not in facts], "errors": errors,
+                         "tokens": record.get("completion_tokens", 0)})
             flagged += [(rows[-1], name, text) for name, text in error_snippets(record["answer"], record["prompt"], errors)]
 
-    print("| label | model | RAG | answers | key facts stated | errors flagged |")
-    print("|---|---|---|---|---|---|")
-    for label, model, rag, answers, stated, total, errors in summarize(rows):
+    print("| label | model | RAG | answers | key facts stated | errors flagged | median answer tokens |")
+    print("|---|---|---|---|---|---|---|")
+    for label, model, rag, answers, stated, total, errors, tokens in summarize(rows):
         print(f"| {label} | {model} | {'yes' if rag else 'no'} | {answers} | {stated}/{total} "
-              f"({100 * stated / total:.0f}%) | {errors} |")
+              f"({100 * stated / total:.0f}%) | {errors} | {tokens:.0f} |")
     print("\nFlagged errors (pattern matches: confirm each one before counting it):")
     for row, name, text in flagged:
         print(f"- {row['label']} {row['model']} {'RAG' if row['rag'] else 'no RAG'} {row['prompt']} "

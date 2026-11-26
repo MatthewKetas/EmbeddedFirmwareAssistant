@@ -65,11 +65,12 @@ class FactCheckTests(unittest.TestCase):
 
     def test_summary_groups_by_label_model_and_retrieval(self):
         rows = [
-            {"label": "a", "model": "m", "rag": True, "prompt": "P1", "facts": 3, "of": 3, "errors": []},
-            {"label": "a", "model": "m", "rag": True, "prompt": "P2", "facts": 1, "of": 5, "errors": ["x"]},
-            {"label": "a", "model": "m", "rag": False, "prompt": "P1", "facts": 0, "of": 3, "errors": []},
+            {"label": "a", "model": "m", "rag": True, "prompt": "P1", "facts": 3, "of": 3, "errors": [], "tokens": 300},
+            {"label": "a", "model": "m", "rag": True, "prompt": "P2", "facts": 1, "of": 5, "errors": ["x"], "tokens": 500},
+            {"label": "a", "model": "m", "rag": False, "prompt": "P1", "facts": 0, "of": 3, "errors": [], "tokens": 90},
         ]
-        self.assertEqual(fact_check.summarize(rows), [("a", "m", True, 2, 4, 8, 1), ("a", "m", False, 1, 0, 3, 0)])
+        self.assertEqual(fact_check.summarize(rows),
+                         [("a", "m", True, 2, 4, 8, 1, 400), ("a", "m", False, 1, 0, 3, 0, 90)])
 
 
 if __name__ == "__main__":
