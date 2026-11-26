@@ -77,6 +77,36 @@ I checked whether thinking off costs Qwen correctness on code with the Critter t
 
 The times and token counts come from the two 5-sample runs. With a uniform prior, the estimated success rates are 0.70 with thinking on and 0.59 with thinking off; the probability that thinking on is better is 0.81, and the 95% interval for the difference is -0.14 to +0.36. The failures differ: with thinking off, three samples did not compile (the one I checked calls `qsort` without including `stdlib.h`) and the forecast group failed most often; with thinking on, every sample compiled and the summary group failed most often. I kept thinking off for the code model because it answers about six times faster for a likely gain of about ten points in correctness.
 
+## My model comparison
+
+I compared six chat models from Lemonade's catalog on the same machine, with thinking off. Speed and token counts are medians of the five Milestone 1 prompts with retrieval. Critter pass@1 comes from the pass@k test above.
+
+| Role | Model | Decode | Total per answer | Critter pass@1 |
+|---|---|---|---|---|
+| Lexical (chosen) | Gemma-4-E4B-it | 98.5 tok/s | 13.4 s | not tested |
+| Lexical | Qwen3-4B-Instruct-2507 | 97.6 tok/s | 20.3 s | not tested |
+| Code (chosen) | Qwen3.6-35B-A3B | 50.9 tok/s | 57.2 s | 0.60 (25 samples) |
+| Code | Qwen3-Coder-30B-A3B-Instruct | 52.7 tok/s | 41.0 s | 0.00 (20 samples) |
+| Code | Gemma-4-26B-A4B-it-MTP | 12.5 tok/s | 78.1 s | 0.20 (20 samples) |
+| Code | Gemma-4-26B-A4B-it | 12.5 tok/s | 88.1 s | not tested |
+
+Qwen3-Coder and Gemma 26B failed Critter on documented requirements: they called the sensor more than the 64-sample capacity, Qwen3-Coder also miscounted the total rejected readings and accepted an infinite high limit, and some samples omitted `#include <stdlib.h>` for `qsort`. The MTP version of Gemma 26B decoded no faster than the plain version, so Lemonade either did not use its multi-token prediction or gained nothing from it on this GPU.
+
+### Datasheet fact check
+
+I checked all 77 saved answers against key facts that I located in the datasheet, for example the 4,096-bit RSA limit (p.32), the 40 mA VDD_SDIO LDO limit (p.51) and I2C Fast mode at 400 Kbit/s (p.37). A script found the facts each answer states and the wrong claims it makes; I read every flagged error in context and removed three false positives. This is a checklist, not my 1-5 rubric, and most configurations have one run per prompt.
+
+| Model | With retrieval: key facts | With retrieval: errors | Without retrieval: key facts | Without retrieval: errors |
+|---|---|---|---|---|
+| Gemma-4-E4B-it | 21/26 (81%) | 0 | 5/26 (19%) | 1 |
+| Qwen3-4B-Instruct-2507 | 23/26 (88%) | 1 | 7/26 (27%) | 6 |
+| Qwen3.6-35B-A3B, thinking off | 93/107 (87%) | 1 | 8/26 (31%) | 4 |
+| Qwen3.6-35B-A3B, thinking on | 23/26 (88%) | 1 | 11/26 (42%) | 4 |
+| Qwen3-Coder-30B-A3B-Instruct | 25/26 (96%) | 1 | 9/26 (35%) | 2 |
+| Gemma-4-26B-A4B-it, with and without MTP | 45/55 (82%) | 2 | not run | not run |
+
+Without retrieval, every model invented datasheet values, such as a 200 mA or 1.8 mA LDO limit, a 2.7-2.95 V minimum supply, or eFuse names the datasheet does not contain. With retrieval, the models were close, so I chose by speed. Most remaining gaps were retrieval misses shared by every model: no answer gave the 50 µs power-up time in Table 2-4 (p.19), only one listed the four 64-bit general-purpose timers (p.31), and six answers said the datasheet does not confirm 400 Kbit/s I2C although p.37 states it.
+
 ## My evidence
 
 I used [ESP32 Series Datasheet v5.3](datasheets/ESP32.pdf), a 78-page hardware reference. The [full milestone report](../reading-and-background/milestone-data-collection/milestone-1.md) preserves the prompts, source hash, evidence locations, all ten response records, and individual score explanations. No new model responses were generated for this review.
