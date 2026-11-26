@@ -170,7 +170,16 @@ To test the rules on Qwen's actual job, I wrote four short C files with two plan
 | Gemma's rules plus a code-review rule | 10/24 | 280 | 5.8 s |
 | None | 17/24, plus 2 unclear | 833 | 15.0 s |
 
-With the rules, Qwen opened four of nine weak reviews with "No bugs found", called the overflowing `uint16_t` sum sufficient, and found neither I2C bug in any run; it seems to read "say what the context lacks" as a reason to stop. Without them it found the ring-buffer overrun and both ADC bugs every time, though never the missing full check. Qwen now gets no system prompt; Gemma keeps the rules.
+With the rules, Qwen opened four of nine weak reviews with "No bugs found", called the overflowing `uint16_t` sum sufficient, and found neither I2C bug in any run; it seems to read "say what the context lacks" as a reason to stop. Without them it found the ring-buffer overrun and both ADC bugs every time, though never the missing full check. Gemma keeps the rules.
+
+Without any rules Qwen found the missing full check in only one of six reviews, so I gave it a short review checklist instead (`REVIEW_CHECKLIST` in [rag.py](rag.py)): bounds including full and empty buffers, integer overflow and division by zero, ignored return values, data shared with interrupts, and counter wrap-around, then "report every real bug, most severe first" and "only report a bug you have traced through the code". Because the checklist names the categories of the four files' bugs, I added two held-out files whose bugs it does not name: a function returning a pointer to its local buffer, a `switch` case missing its `break`, an `&`/`==` precedence error, and a `uint8_t` loop counter that cannot reach a count above 255 (the last is partly a truncation bug). I ran both prompts three times on all six files and confirmed every match by hand:
+
+| Qwen system prompt | Checked files: bugs found | Held-out files: bugs found | Median answer tokens (checked / held out) |
+|---|---|---|---|
+| None | 15/24 | 9/12 | 655 / 238 |
+| Review checklist | 23/24 | 12/12 | 1365 / 838 |
+
+The checklist found the missing full check in all three runs and did as well on the held-out bugs, including the `uint8_t` counter that no review without it noticed, so the gain is not only on the bugs it lists. The cost is length: about 10-12 s more per review at 58 tok/s. Without a prompt, one review was 28 tokens and found nothing, and one called the `i2c_write` usage correct. The checklist put the more severe bug first less often on the held-out files (2 of 6 against 3 of 6), mostly by listing the missing `break` before the dangling pointer. The script counts only planted bugs, so I have not checked whether the longer reviews also contain invented findings. Qwen now gets the checklist; Gemma keeps the answer rules.
 
 ## My evidence
 
