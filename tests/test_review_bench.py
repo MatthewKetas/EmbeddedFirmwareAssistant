@@ -1,0 +1,82 @@
+import contextlib
+import io
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "RAG"))
+import rag  # noqa: E402
+import review_bench  # noqa: E402
+
+
+class ReviewBenchTests(unittest.TestCase):
+    def test_every_case_file_exists_and_each_bug_line_is_found(self):
+        self.assertEqual(sorted(review_bench.BUGS), sorted(p.name for p in review_bench.CASES_DIR.glob("*.c")))
+        for name, bugs in review_bench.BUGS.items():
+            for bug, anchor, _ in bugs:
+                with self.subTest(bug=bug):
+                    review_bench.bug_line(name, anchor)   # raises if the anchor is not in the file
+
+    def test_case_is_labelled_like_a_repository_snippet(self):
+        prompt = review_bench.rag.build_rag_prompt(review_bench.QUESTION, [review_bench.case_hit("adc_average.c")])
+        self.assertIn("[review_cases/adc_average.c:1-24]\n/* Averages", prompt)
+        self.assertIn("Question: Review this code for bugs.", prompt)
+
+    def test_a_review_that_names_both_bugs_severe_first(self):
+        answer = ("1. adc_average.c line 13: uint16_t sum overflows after 16 samples; use uint32_t.\n"
+                  "2. line 17: division by zero when count is 0.")
+        self.assertEqual(review_bench.score(answer, "adc_average.c"),
+                         {"found": [b for b, *_ in review_bench.BUGS["adc_average.c"]], "of": 2, "severe_first": True})
+
+    def test_severe_bug_mentioned_second_is_not_first(self):
+        answer = "Missing check: i2c_write return value is ignored. Also len can exceed the 4-byte buf, a buffer overflow."
+        result = review_bench.score(answer, "sensor_i2c.c")
+        self.assertEqual(len(result["found"]), 2)
+        self.assertFalse(result["severe_first"])
+
+    def test_a_review_that_misses_the_bugs(self):
+        answer = "The code looks fine. Consider adding comments and using const where possible."
+        for name in review_bench.BUGS:
+            with self.subTest(name=name):
+                self.assertEqual(review_bench.score(answer, name)["found"], [])
+
+    def test_known_phrasings_are_matched(self):
+        cases = [
+            ("uart_ring.c", "Off-by-one: `next > RB_SIZE` lets head equal RB_SIZE", 0),
+            ("uart_ring.c", "The ISR never checks whether the buffer is full, so it overwrites unread data", 1),
+            ("tick_timer.c", "tick_flag must be declared volatile", 0),
+            ("tick_timer.c", "elapsed_since returns 0 after tick_ms wraps around", 1),
+        ]
+        for name, answer, index in cases:
+            with self.subTest(answer=answer):
+                self.assertIn(review_bench.BUGS[name][index][0], review_bench.score(answer, name)["found"])
+
+    def test_summary_groups_by_rules_setting(self):
+        rows = [
+            {"rules": True, "found": ["a", "b"], "of": 2, "severe_first": True, "completion_tokens": 400, "total_s": 10.0},
+            {"rules": True, "found": ["a"], "of": 2, "severe_first": False, "completion_tokens": 600, "total_s": 14.0},
+            {"rules": False, "found": [], "of": 2, "severe_first": False, "completion_tokens": 900, "total_s": 20.0},
+        ]
+        self.assertEqual(review_bench.summarize(rows), [(True, 2, 3, 4, 1, 500, 12.0), (False, 1, 0, 2, 0, 900, 20.0)])
+
+
+class NoRulesTests(unittest.TestCase):
+    def test_no_system_message_is_sent_when_the_rules_are_off(self):
+        client = MagicMock()
+        stream = MagicMock()
+        stream.__enter__.return_value = stream
+        stream.__iter__.return_value = iter([])
+        client.chat.completions.create.return_value = stream
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            patch.object(rag, "client", client),
+            patch.object(rag, "system_prompt", lambda model: ""),
+            patch.object(rag.httpx, "post", return_value=MagicMock(status_code=200, json=lambda: {})),
+        ):
+            rag.stream_reply([{"role": "user", "content": "q"}], rag.CODE_MODEL)
+        self.assertEqual(client.chat.completions.create.call_args.kwargs["messages"], [{"role": "user", "content": "q"}])
+
+
+if __name__ == "__main__":
+    unittest.main()

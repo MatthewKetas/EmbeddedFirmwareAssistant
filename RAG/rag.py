@@ -606,7 +606,7 @@ def stream_reply(messages: list, model: str, echo: bool = True) -> tuple[str, di
         extra["enable_thinking"] = False   # Lemonade extension
     stream = client.chat.completions.create(
         model=model,
-        messages=[{"role": "system", "content": system_prompt(model)}] + messages,
+        messages=([{"role": "system", "content": rules}] if (rules := system_prompt(model)) else []) + messages,
         temperature=TEMPERATURE,
         top_p=TOP_P,
         extra_body=extra,
