@@ -31,9 +31,11 @@ TARGETS = {
     "P4": [("3.3 V / 500 mA supply, p.19", r"500\s*mA"),
            ("VDD_SDIO LDO 40 mA, p.51", r"LDO\s*can\s*offer\s*is\s*40\s*mA"),
            ("MTDI selects VDD_SDIO, p.24", r"MTDI\s*=\s*1"),
-           ("2 kOhm resistor for 1.8 V, p.19", r"2\s*k\s*(Ω|ohm)")],
+           ("2 kOhm resistor for 1.8 V, p.19", r"2\s*k\s*(Ω|ohm)"),
+           ("6 Ohm resistor from VDD3P3_RTC, p.18", r"6\s*(Ω|ohm)\s*resistor")],
     "P5": [("four general-purpose timers, p.31", r"four\s*general-purpose\s*timers"),
-           ("three watchdog timers, p.31", r"three\s*watchdog\s*timers")],
+           ("three watchdog timers, p.31", r"three\s*watchdog\s*timers"),
+           ("watchdog four stages, p.31", r"four\s*stages")],
 }
 
 
