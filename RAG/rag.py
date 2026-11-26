@@ -564,6 +564,26 @@ def print_stats(stats: dict) -> None:
     print(f"[{' | '.join(parts)}]")
 
 
+# A short response agreement sent ahead of every conversation. Qwen wrote 1,500-3,000 tokens per
+# datasheet answer, most of its ~58 s; small models follow a few rules better than a long list.
+ANSWER_RULES = (
+    "Answer rules:\n"
+    "- Lead with the direct answer, then the supporting details.\n"
+    "- Answer each part of the question in order, briefly; skip background nobody asked for.\n"
+    "- When context is provided, take facts only from it and say in one line what it lacks.\n"
+    "- Label design inferences as inferences.\n"
+    "- Keep the answer under about 350 words unless the question needs more."
+)
+CODE_REVIEW_RULES = (
+    "\nFor code reviews: list findings most severe first, each with file, line and a one-line fix; "
+    "put real bugs before style nits."
+)
+
+
+def system_prompt(model: str) -> str:
+    return ANSWER_RULES + (CODE_REVIEW_RULES if model == CODE_MODEL else "")
+
+
 def stream_reply(messages: list, model: str, echo: bool = True) -> tuple[str, dict]:
     options = MODEL_OPTIONS[model]
     start = time.monotonic()
@@ -584,7 +604,7 @@ def stream_reply(messages: list, model: str, echo: bool = True) -> tuple[str, di
         extra["enable_thinking"] = False   # Lemonade extension
     stream = client.chat.completions.create(
         model=model,
-        messages=messages,
+        messages=[{"role": "system", "content": system_prompt(model)}] + messages,
         temperature=TEMPERATURE,
         top_p=TOP_P,
         extra_body=extra,

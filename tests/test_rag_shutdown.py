@@ -70,6 +70,7 @@ class ShutdownTests(unittest.TestCase):
             timeout=120,
         )] * 2)
         self.assertEqual(create.call_args.kwargs["messages"], [
+            {"role": "system", "content": rag.system_prompt(rag.LEXICAL_MODEL)},
             {"role": "user", "content": "first question"},
             {"role": "assistant", "content": "answer"},
             {"role": "user", "content": "second question"},
