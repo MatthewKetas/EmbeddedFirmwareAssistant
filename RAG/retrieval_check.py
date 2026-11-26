@@ -1,11 +1,11 @@
 """Show where the passages that answer each Milestone 1 prompt rank in retrieval,
-under two retrieval settings (default: the current one, then with the question split into sentences).
+by vectors alone and merged with keyword ranking.
 
 Needs only the embedding model and the Qdrant library, no chat model.
 Stop rag.py first: both open the same on-disk Qdrant library.
 
     python RAG/retrieval_check.py --board esp-32
-    python RAG/retrieval_check.py --compare vectors keywords --depth 100
+    python RAG/retrieval_check.py --depth 100
 """
 import argparse
 import re
@@ -14,11 +14,11 @@ import time
 import rag
 from bench import load_prompts
 
-# Settings to compare: vectors alone, merged with keyword ranking, and also per question sentence.
+# Settings to compare. Retrieving per question sentence was tried and removed: on these prompts it
+# pushed the I2C speed and power-up timing out of the top 10 and brought in neither UART passage.
 SETTINGS = {
-    "vectors": {"HYBRID_SEARCH": False, "SPLIT_QUESTION": False},
-    "keywords": {"HYBRID_SEARCH": True, "SPLIT_QUESTION": False},
-    "split": {"HYBRID_SEARCH": True, "SPLIT_QUESTION": True},
+    "vectors": {"HYBRID_SEARCH": False},
+    "keywords": {"HYBRID_SEARCH": True},
 }
 # A passage counts as found when a retrieved chunk's text matches its pattern.
 # Patterns follow the datasheet's wording (ESP32.pdf page in the name).
@@ -63,7 +63,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--depth", type=int, default=50, help="how many chunks to rank (default 50)")
     parser.add_argument("--board", help="board id, as in rag.py's /board")
-    parser.add_argument("--compare", nargs=2, choices=list(SETTINGS), default=["keywords", "split"],
+    parser.add_argument("--compare", nargs=2, choices=list(SETTINGS), default=["vectors", "keywords"],
                         metavar=("BEFORE", "AFTER"), help=f"two of: {', '.join(SETTINGS)}")
     args = parser.parse_args()
 
