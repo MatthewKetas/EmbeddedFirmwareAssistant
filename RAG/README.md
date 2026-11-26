@@ -128,6 +128,12 @@ Searching each sentence of the question separately made ranking worse, because t
 
 In a bench run with the ESP32 board selected, both chosen models stated the three facts that no earlier configuration had covered: the 400 Kbit/s I2C mode, the 50 µs power-up time and the four general-purpose timers. Gemma-4-E4B took a median 13.8 s per answer and Qwen3.6-35B-A3B 48.2 s. I read these ten answers myself rather than with the fact-check script. They still contained errors that retrieval does not explain: Gemma labelled the SPI flash boot setting as SDIO download boot, and Qwen gave U0TXD as GPIO3 instead of GPIO1 and called U0TXD a strapping pin.
 
+## My stricter answer instruction
+
+Some remaining errors came from the models filling gaps from memory: when the pin table was not retrieved, Qwen wrote that U0TXD is GPIO3 "in typical ESP32 pinouts" (it is GPIO1). The retrieval prompt now requires every stated value, pin number, register or name to appear in the context and asks the model to say what is missing. I also stopped indexing repeated table cells: Docling repeated a merged cell once per column, so one pin-table row held the same description nine times.
+
+I compared a bench run with the new instruction against the run before it, one run per model with the ESP32 board selected, by reading the answers. Errors fell from five to two. Qwen stopped inventing the U0TXD pin and instead said the mapping was not in the context; Gemma stopped mislabelling the SPI flash boot setting; Qwen described the 6 Ω resistor correctly as the internal path from VDD3P3_RTC. The new errors were Gemma listing VDDA as one of the three digital power domains and Qwen stating that the datasheet does not describe secure boot, which it lists as a feature on a page that was not retrieved. Facts that were in the context, such as the 400 Kbit/s I2C mode and the 50 µs power-up time, were still stated. Qwen decoded at only 15 tok/s in this run, so I do not use it as a speed measurement.
+
 ## My evidence
 
 I used [ESP32 Series Datasheet v5.3](datasheets/ESP32.pdf), a 78-page hardware reference. The [full milestone report](../reading-and-background/milestone-data-collection/milestone-1.md) preserves the prompts, source hash, evidence locations, all ten response records, and individual score explanations. No new model responses were generated for this review.
