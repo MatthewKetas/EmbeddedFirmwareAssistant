@@ -448,7 +448,7 @@ def print_stats(stats: dict) -> None:
     print(f"[{' | '.join(parts)}]")
 
 
-def stream_reply(messages: list, model: str) -> tuple[str, dict]:
+def stream_reply(messages: list, model: str, echo: bool = True) -> tuple[str, dict]:
     options = MODEL_OPTIONS[model]
     start = time.monotonic()
     # Context size is a model-load option, not a chat-completion option. Lemonade keeps one
@@ -475,7 +475,8 @@ def stream_reply(messages: list, model: str) -> tuple[str, dict]:
         stream=True,
         stream_options={"include_usage": True},
     )
-    print("Response: ", end="", flush=True)
+    if echo:
+        print("Response: ", end="", flush=True)
     reply, usage, timings = "", None, None
     first = answer = last = None
     thinking = 0
@@ -492,13 +493,15 @@ def stream_reply(messages: list, model: str) -> tuple[str, dict]:
                     first = first or time.monotonic()
                     answer = answer or time.monotonic()
                     last = time.monotonic()
-                    print(delta.content, end="", flush=True)
+                    if echo:
+                        print(delta.content, end="", flush=True)
                     reply += delta.content
             if chunk.usage:
                 usage = chunk.usage
             timings = getattr(chunk, "timings", None) or timings
     end = time.monotonic()
-    print()
+    if echo:
+        print()
     completion = usage.completion_tokens if usage else None
     decode_tps = (timings or {}).get("predicted_per_second")
     if decode_tps is None and completion and first and last > first:
@@ -516,7 +519,8 @@ def stream_reply(messages: list, model: str) -> tuple[str, dict]:
         "total_s": end - start,
     }
     print_stats(stats)
-    print()
+    if echo:
+        print()
     return reply, stats
 
 

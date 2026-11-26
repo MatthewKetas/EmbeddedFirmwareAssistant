@@ -91,6 +91,15 @@ class SpeedTests(unittest.TestCase):
             self.reply(rag.CODE_MODEL, [chunk(content="a")])
         self.assertNotIn("enable_thinking", self.client.chat.completions.create.call_args.kwargs["extra_body"])
 
+    def test_reply_text_can_be_kept_off_the_terminal(self):
+        out = io.StringIO()
+        self.client.chat.completions.create.return_value = FakeStream(self.clock, [chunk(content="secret answer")], 0.01)
+        with contextlib.redirect_stdout(out):
+            reply, _ = rag.stream_reply([{"role": "user", "content": "q"}], rag.LEXICAL_MODEL, echo=False)
+        self.assertEqual(reply, "secret answer")
+        self.assertNotIn("secret answer", out.getvalue())
+        self.assertIn(f"[{rag.LEXICAL_MODEL} | load", out.getvalue())   # the stats line still prints
+
     def test_load_error_shows_lemonade_message(self):
         # A mistyped model name used to surface only as "404 Not Found".
         self.post.side_effect = None

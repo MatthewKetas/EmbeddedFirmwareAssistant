@@ -25,7 +25,7 @@ def load_prompts() -> dict[str, str]:
     return dict(re.findall(r"^### (P\d+)\..*?```text\n(.*?)\n```", text, re.MULTILINE | re.DOTALL))
 
 
-def ask(model: str, question: str, use_rag: bool, board_id: str | None) -> tuple[str, dict, int]:
+def ask(model: str, question: str, use_rag: bool, board_id: str | None, echo: bool) -> tuple[str, dict, int]:
     content, hits = question, []
     if use_rag:
         board_context = rag.board_map.context(board_id, question) if board_id else ""
@@ -34,7 +34,7 @@ def ask(model: str, question: str, use_rag: bool, board_id: str | None) -> tuple
             hits = rag.fit_code_context(question, hits, [], board_context)
         if hits or board_context:
             content = rag.build_rag_prompt(question, hits, board_context)
-    reply, stats = rag.stream_reply([{"role": "user", "content": content}], model)
+    reply, stats = rag.stream_reply([{"role": "user", "content": content}], model, echo=echo)
     return reply, stats, len(hits)
 
 
@@ -55,6 +55,7 @@ def main() -> None:
     parser.add_argument("--ctx", type=int, help="override ctx_size for every model")
     parser.add_argument("--llamacpp-args", help="override llamacpp_args for every model")
     parser.add_argument("--thinking", choices=["on", "off"], help="override thinking for every model")
+    parser.add_argument("--show-answers", action="store_true", help="also print each answer (they are always saved)")
     args = parser.parse_args()
 
     prompts = load_prompts()
@@ -74,6 +75,7 @@ def main() -> None:
     RESULTS.mkdir(exist_ok=True)
     out = RESULTS / f"{time.strftime('%Y%m%d-%H%M%S')}{'-' + args.label if args.label else ''}.jsonl"
     rows = []
+    print(f"Answers go to {out}")
     rag.client = rag.OpenAI(base_url=rag.BASE_URL, api_key=rag.API_KEY)
     rag.qdrant = rag.QdrantClient(path=rag.QDRANT_PATH)
     try:
@@ -82,8 +84,10 @@ def main() -> None:
             for use_rag in modes:
                 for pid, question in prompts.items():
                     for run in range(1, args.runs + 1):
-                        print(f"\n=== {model} | {'RAG' if use_rag else 'no RAG'} | {pid} run {run} ===")
-                        reply, stats, n_hits = ask(model, question, use_rag, args.board)
+                        if args.show_answers:
+                            print()
+                        print(f"=== {model} | {'RAG' if use_rag else 'no RAG'} | {pid} run {run} ===", flush=True)
+                        reply, stats, n_hits = ask(model, question, use_rag, args.board, args.show_answers)
                         row = {"label": args.label, "prompt": pid, "run": run, "rag": use_rag,
                                "chunks": n_hits, **rag.MODEL_OPTIONS[model], **stats, "answer": reply}
                         rows.append(row)
