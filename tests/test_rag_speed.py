@@ -112,6 +112,14 @@ class SpeedTests(unittest.TestCase):
         self.assertIn("Lead with the direct answer", code_rules)
         self.assertIn("most severe first", code_rules)
 
+    def test_rules_ask_for_the_key_values_and_set_no_length_cap(self):
+        # A "briefly ... under 350 words" version cost 9 points of key facts in the rules bench.
+        rules = rag.system_prompt(rag.LEXICAL_MODEL)
+        self.assertIn("Cover every part of the question", rules)
+        self.assertIn("values, limits and pin cautions", rules)
+        self.assertNotIn("words", rules)
+        self.assertNotIn("briefly", rules)
+
     def test_rules_stay_short(self):
         # Small models follow a few rules better than a long list, and every prompt carries them.
         for model in (rag.LEXICAL_MODEL, rag.CODE_MODEL):

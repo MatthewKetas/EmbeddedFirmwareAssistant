@@ -569,10 +569,12 @@ def print_stats(stats: dict) -> None:
 ANSWER_RULES = (
     "Answer rules:\n"
     "- Lead with the direct answer, then the supporting details.\n"
-    "- Answer each part of the question in order, briefly; skip background nobody asked for.\n"
+    # "Briefly", "skip background" and a 350-word cap cut answers 40-60% but dropped key facts
+    # (supply range, strapping and input-only pins): 76% -> 67% for Gemma, 95% -> 86% for Qwen.
+    "- Cover every part of the question in order, with the values, limits and pin cautions that bear on it; "
+    "leave out unrelated background.\n"
     "- When context is provided, take facts only from it and say in one line what it lacks.\n"
-    "- Label design inferences as inferences.\n"
-    "- Keep the answer under about 350 words unless the question needs more."
+    "- Label design inferences as inferences."
 )
 CODE_REVIEW_RULES = (
     "\nFor code reviews: list findings most severe first, each with file, line and a one-line fix; "
