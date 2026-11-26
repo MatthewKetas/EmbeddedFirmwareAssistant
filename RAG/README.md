@@ -134,6 +134,19 @@ Some remaining errors came from the models filling gaps from memory: when the pi
 
 I compared a bench run with the new instruction against the run before it, one run per model with the ESP32 board selected, by reading the answers. Errors fell from five to two. Qwen stopped inventing the U0TXD pin and instead said the mapping was not in the context; Gemma stopped mislabelling the SPI flash boot setting; Qwen described the 6 Ω resistor correctly as the internal path from VDD3P3_RTC. The new errors were Gemma listing VDDA as one of the three digital power domains and Qwen stating that the datasheet does not describe secure boot, which it lists as a feature on a page that was not retrieved. Facts that were in the context, such as the 400 Kbit/s I2C mode and the 50 µs power-up time, were still stated. Qwen decoded at only 15 tok/s in this run, so I do not use it as a speed measurement.
 
+## My three-run check
+
+To see whether the results hold beyond one run, I ran both chosen models on all five prompts three times, with and without retrieval, using the ESP32 board and the stricter instruction (60 answers). I checked the answers with [fact_check.py](fact_check.py) and confirmed each flagged error by hand; seven of the first thirteen flags were false and I tightened the patterns.
+
+| Model | With retrieval: key facts | With retrieval: errors | Without retrieval: key facts | Without retrieval: errors |
+|---|---|---|---|---|
+| Gemma-4-E4B-it | 59/78 (76%) | 0 | 16/78 (21%) | 2, plus 1 unclear |
+| Qwen3.6-35B-A3B | 74/78 (95%) | 0 | 31/78 (40%) | 2 |
+
+Neither model made a confirmed error in its 15 answers with retrieval. Gemma stated fewer key facts than Qwen because its answers became shorter under the stricter instruction: it left out details such as the 1 ms strapping hold time, the 6 Ω and 2 kΩ resistors and the number of strapping pins, each in at most three of its fifteen answers, rather than whole topics. Without retrieval, one of Qwen's answers was only "No response: Text completion blocked by content filters", which the model generated itself; nothing in this pipeline filters content.
+
+With the screen kept on, Qwen decoded at 48-55 tok/s in each prompt's first run, so I suspect the earlier 15 tok/s runs came from low-power behaviour when the screen turned off. In the second and third runs of a prompt, llama.cpp reused the cached prompt, so their prefill times are not real measurements; first runs took 1.4-3.2 s of prefill and 9-14 s in total for Gemma, and 22-35 s of prefill and 58-82 s in total for Qwen.
+
 ## My evidence
 
 I used [ESP32 Series Datasheet v5.3](datasheets/ESP32.pdf), a 78-page hardware reference. The [full milestone report](../reading-and-background/milestone-data-collection/milestone-1.md) preserves the prompts, source hash, evidence locations, all ten response records, and individual score explanations. No new model responses were generated for this review.
