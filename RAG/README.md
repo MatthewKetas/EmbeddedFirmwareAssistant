@@ -67,6 +67,8 @@ Between the thinking-on and thinking-off runs I changed two things: I turned thi
 
 With thinking off, Qwen's retrieval answers kept the same key datasheet facts as with thinking on, by my fact check; one thinking-off P2 answer wrongly allows UART TX on input-only pins. I have not scored these answers on the 1-5 scale, and I have not checked thinking off on coding questions. Each median includes the first prompt after loading, which is slower. Prefill is now about half of Qwen's retrieval answer time.
 
+I also tried larger prompt batches for Qwen (`-b 2048 -ub 2048`), since its prefill of 3-5k-token prompts takes 15-38 s with part of the model in system RAM. Run back to back at normal speed, one first run per prompt, the median prefill went from 21.2 s to 19.2 s, but P3 was slower (24.2 s against 28.5 s), P3 itself varied from 18.6 s to 28.5 s between two runs with the larger batches, and decode was slightly slower (48.9 against 51.4 tok/s); the median total was 56.9 s against 56.5 s. The difference is within run-to-run noise, so I kept Lemonade's default batch sizes.
+
 ## My coding test with thinking on and off
 
 I checked whether thinking off costs Qwen correctness on code with the Critter task in [pass@k](../pass@k/run.py): each sample implements three C functions, which hidden tests grade in four groups. All samples below finished on their own (`finish_reason` "stop"). A first thinking-on run at the default 4,096-token cap was cut off in all five samples, so the thinking-on runs below allow 12,288 and 14,336 tokens.
