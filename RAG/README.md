@@ -147,6 +147,20 @@ Neither model made a confirmed error in its 15 answers with retrieval. Gemma sta
 
 With the screen kept on, Qwen decoded at 48-55 tok/s in each prompt's first run, so I suspect the earlier 15 tok/s runs came from low-power behaviour when the screen turned off. In the second and third runs of a prompt, llama.cpp reused the cached prompt, so their prefill times are not real measurements; first runs took 1.4-3.2 s of prefill and 9-14 s in total for Gemma, and 22-35 s of prefill and 58-82 s in total for Qwen.
 
+## My answer rules
+
+Every chat request now starts with a short system prompt (`ANSWER_RULES` in [rag.py](rag.py)): lead with the direct answer, cover every part of the question with the values, limits and pin cautions that bear on it, take facts only from the context when there is one, and label design inferences. Qwen also gets one code-review rule: findings most severe first, each with file, line and a fix. I compared two versions against the three-run check above, each with three runs of the five prompts on the ESP32 board (60 answers per version):
+
+| Version | Gemma with retrieval: key facts | Gemma: median answer tokens | Qwen with retrieval: key facts | Qwen: median answer tokens | Errors with retrieval |
+|---|---|---|---|---|---|
+| No rules (three-run check) | 59/78 (76%) | 836 | 74/78 (95%) | 1660 | 0 |
+| First rules: "briefly", under about 350 words | 52/78 (67%) | 511 | 67/78 (86%) | 672 | 0 |
+| Final rules: cover every part, no length limit | 62/78 (79%) | 827 | 67/78 (86%) | 1044 | 0 |
+
+The first version shortened answers by 40-60% but dropped facts the questions need, such as the 2.3-3.6 V supply range, the strapping and input-only pins and the LDO's 40 mA limit, so I replaced it. With the final rules, Gemma, which answers datasheet questions, states as many key facts as before at the same length. Qwen's datasheet answers are 37% shorter, about 13 s less at 50 tok/s, but state fewer key facts; that matters only if Qwen answers datasheet questions again. I confirmed every flagged error by hand: none with retrieval in any version. Without retrieval, Qwen made three real errors with the final rules (an RSA limit of 3072 bits instead of 4096, and LDO limits of 300 mA and 200 mA instead of 40 mA). How the rules affect Qwen's code reviews is untested, because the pass@k test bypasses them.
+
+Qwen ran at about 15 tok/s during the first-rules run even with the screen timeout set to two hours, so the slow state is not only caused by the screen turning off.
+
 ## My evidence
 
 I used [ESP32 Series Datasheet v5.3](datasheets/ESP32.pdf), a 78-page hardware reference. The [full milestone report](../reading-and-background/milestone-data-collection/milestone-1.md) preserves the prompts, source hash, evidence locations, all ten response records, and individual score explanations. No new model responses were generated for this review.
