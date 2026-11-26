@@ -62,9 +62,20 @@ I timed both chat models with [bench.py](bench.py) on the five Milestone 1 promp
 | Qwen3.6-35B-A3B, thinking off | Yes | 28.0 s | 28.0 s | 50.9 tok/s | 0 | 57.2 s |
 | Qwen3.6-35B-A3B, thinking off | No | 1.1 s | 1.1 s | 51.8 tok/s | 0 | 37.8 s |
 
-Between the thinking-on and thinking-off runs I changed two things: I turned thinking off, and I lowered Lemonade's limit from two loaded chat models to one. Gemma was loaded only during the thinking-on run's first prompt, yet Qwen still decoded at about 14 tok/s on P2-P4, so I do not know why that run was slower. A repeat of the thinking-off retrieval run the next day gave 47.0 tok/s and 57.8 s. Two other settings made Qwen slower with retrieval: an 8,192-token context (14.8 tok/s, 132.7 s) and `--n-cpu-moe 20` (7.0 tok/s, 316.0 s).
+Between the thinking-on and thinking-off runs I changed two things: I turned thinking off, and I lowered Lemonade's limit from two loaded chat models to one. Gemma was loaded only during the thinking-on run's first prompt, yet Qwen still decoded at about 14 tok/s on P2-P4. Thinking alone does not explain that: in the coding test below, Qwen decoded at about 57 tok/s with thinking on, although with a much shorter prompt. I do not know the cause. A repeat of the thinking-off retrieval run the next day gave 47.0 tok/s and 57.8 s. Two other settings made Qwen slower with retrieval: an 8,192-token context (14.8 tok/s, 132.7 s) and `--n-cpu-moe 20` (7.0 tok/s, 316.0 s).
 
 With thinking off, Qwen's retrieval answers kept the same key datasheet facts as with thinking on, by my fact check; one thinking-off P2 answer wrongly allows UART TX on input-only pins. I have not scored these answers on the 1-5 scale, and I have not checked thinking off on coding questions. Each median includes the first prompt after loading, which is slower. Prefill is now about half of Qwen's retrieval answer time.
+
+## My coding test with thinking on and off
+
+I checked whether thinking off costs Qwen correctness on code with the Critter task in [pass@k](../pass@k/run.py): each sample implements three C functions, which hidden tests grade in four groups. All samples below finished on their own (`finish_reason` "stop"). A first thinking-on run at the default 4,096-token cap was cut off in all five samples, so the thinking-on runs below allow 12,288 and 14,336 tokens.
+
+| Thinking | Samples | Compiled | Passed all four groups | pass@1 | Median time per sample | Median tokens per sample |
+|---|---|---|---|---|---|---|
+| Off | 25 (5 + 20) | 22 | 15 | 0.60 | 30.2 s | 1,580 |
+| On | 25 (5 + 20) | 25 | 18 | 0.72 | 170.9 s | 9,661 |
+
+The times and token counts come from the two 5-sample runs. With a uniform prior, the estimated success rates are 0.70 with thinking on and 0.59 with thinking off; the probability that thinking on is better is 0.81, and the 95% interval for the difference is -0.14 to +0.36. The failures differ: with thinking off, three samples did not compile (the one I checked calls `qsort` without including `stdlib.h`) and the forecast group failed most often; with thinking on, every sample compiled and the summary group failed most often. I kept thinking off for the code model because it answers about six times faster for a likely gain of about ten points in correctness.
 
 ## My evidence
 
