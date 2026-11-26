@@ -1,11 +1,11 @@
 """Show where the passages that answer each Milestone 1 prompt rank in retrieval,
-by vectors alone and merged with keyword ranking.
+under two retrieval settings (default: the current one, then with the question split into sentences).
 
 Needs only the embedding model and the Qdrant library, no chat model.
 Stop rag.py first: both open the same on-disk Qdrant library.
 
-    python RAG/retrieval_check.py
-    python RAG/retrieval_check.py --depth 100
+    python RAG/retrieval_check.py --board esp-32
+    python RAG/retrieval_check.py --compare vectors keywords --depth 100
 """
 import argparse
 import re
@@ -14,6 +14,12 @@ import time
 import rag
 from bench import load_prompts
 
+# Settings to compare: vectors alone, merged with keyword ranking, and also per question sentence.
+SETTINGS = {
+    "vectors": {"HYBRID_SEARCH": False, "SPLIT_QUESTION": False},
+    "keywords": {"HYBRID_SEARCH": True, "SPLIT_QUESTION": False},
+    "split": {"HYBRID_SEARCH": True, "SPLIT_QUESTION": True},
+}
 # A passage counts as found when a retrieved chunk's text matches its pattern.
 # Patterns follow the datasheet's wording (ESP32.pdf page in the name).
 TARGETS = {
@@ -57,41 +63,46 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--depth", type=int, default=50, help="how many chunks to rank (default 50)")
     parser.add_argument("--board", help="board id, as in rag.py's /board")
+    parser.add_argument("--compare", nargs=2, choices=list(SETTINGS), default=["keywords", "split"],
+                        metavar=("BEFORE", "AFTER"), help=f"two of: {', '.join(SETTINGS)}")
     args = parser.parse_args()
 
     rag.client = rag.OpenAI(base_url=rag.BASE_URL, api_key=rag.API_KEY)
     rag.qdrant = rag.QdrantClient(path=rag.QDRANT_PATH)
     top_n, rag.TOP_N_CHUNKS = rag.TOP_N_CHUNKS, args.depth
+    defaults = {name: getattr(rag, name) for name in SETTINGS["vectors"]}
+    before, after = args.compare
     try:
         print(f"Library sources: {', '.join(rag.list_sources()) or '(empty)'}\n")
         for pid, question in load_prompts().items():
-            # The same question ranked by vectors alone, then merged with keyword ranking.
             results = {}
-            for hybrid in (False, True):
-                rag.HYBRID_SEARCH = hybrid
+            for setting in (before, after):
+                for name, value in SETTINGS[setting].items():
+                    setattr(rag, name, value)
                 start = time.monotonic()
                 hits = rag.retrieve(question, None, args.board)
-                results[hybrid] = hits, time.monotonic() - start, *rank_targets(hits, TARGETS[pid], top_n)
-            (_, t_vector, ranks_vector, dup_vector), (hybrid_hits, t_hybrid, ranks_hybrid, dup_hybrid) = \
-                results[False], results[True]
-            print(f"=== {pid}: vectors {t_vector:.1f}s, with keywords {t_hybrid:.1f}s; "
-                  f"duplicates in the top {top_n}: {dup_vector} / {dup_hybrid}")
-            for name in ranks_vector:
-                pair = (ranks_vector[name], ranks_hybrid[name])
+                results[setting] = hits, time.monotonic() - start, *rank_targets(hits, TARGETS[pid], top_n)
+            (_, t_before, ranks_before, dup_before), (after_hits, t_after, ranks_after, dup_after) = \
+                results[before], results[after]
+            print(f"=== {pid}: {before} {t_before:.1f}s, {after} {t_after:.1f}s; "
+                  f"duplicates in the top {top_n}: {dup_before} / {dup_after}")
+            for name in ranks_before:
+                pair = (ranks_before[name], ranks_after[name])
                 cells = [f"{r}" if r else f">{args.depth}" for r in pair]
                 sent = tuple(r is not None and r <= top_n for r in pair)
                 note = {(False, True): "   <- now sent", (True, False): "   <- no longer sent",
                         (False, False): "   <- not sent either way"}.get(sent, "")
                 print(f"  {name:42} rank {cells[0]:>4} -> {cells[1]:>4}{note}")
             # First line of each chunk: Docling puts the heading path there.
-            print(f"  top {top_n} with keywords:")
-            for rank, h in enumerate(hybrid_hits[:top_n], 1):
+            print(f"  top {top_n} with {after}:")
+            for rank, h in enumerate(after_hits[:top_n], 1):
                 first = " ".join(h.payload["text"].split("\n", 1)[0].split())[:70]
                 print(f"    {rank:2}. {rag.source_label(h.payload):22} {first}")
             print()
     finally:
         rag.TOP_N_CHUNKS = top_n
-        rag.HYBRID_SEARCH = False
+        for name, value in defaults.items():
+            setattr(rag, name, value)
         rag.teardown()
 
 

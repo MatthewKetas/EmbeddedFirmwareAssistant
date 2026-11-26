@@ -63,6 +63,17 @@ class FactCheckTests(unittest.TestCase):
             with self.subTest(answer=answer):
                 self.assertIn(error, fact_check.check(answer, prompt)[1])
 
+    def test_uart_pin_facts(self):
+        for answer in ("U0TXD is GPIO1 and U0RXD is GPIO3", "U0TXD (GPIO1)", "**U0TXD** → GPIO1",
+                       "TX: GPIO1 (U0TXD)", "U0TXD = GPIO1"):
+            with self.subTest(answer=answer):
+                self.assertIn("U0TXD is GPIO1 p15", fact_check.check(answer, "P3")[0])
+        for answer in ("U0TXD is GPIO10", "U0TXD is GPIO3; GPIO1 is unused"):
+            with self.subTest(answer=answer):
+                self.assertNotIn("U0TXD is GPIO1 p15", fact_check.check(answer, "P3")[0])
+        self.assertIn("UART pins via GPIO Matrix p37",
+                      fact_check.check("The UART pins can be routed to any GPIO via the GPIO Matrix.", "P2")[0])
+
     def test_summary_groups_by_label_model_and_retrieval(self):
         rows = [
             {"label": "a", "model": "m", "rag": True, "prompt": "P1", "facts": 3, "of": 3, "errors": [], "tokens": 300},

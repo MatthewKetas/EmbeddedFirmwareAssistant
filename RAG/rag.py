@@ -71,6 +71,9 @@ TOP_N_CHUNKS = 10                                # chunks sent to the chat model
 # the I2C 400 Kbit/s passage from rank 23 to 8 and the power-up timing table from 14 to 6,
 # dropped nothing from the top 10, and added about 0.1 s per question.
 HYBRID_SEARCH = True
+# Also retrieve for each sentence of the question and merge those rankings in. One embedding of
+# a six-part question matched its main topic; parts like "the UART pin mappings" ranked 28-36.
+SPLIT_QUESTION = False
 EMBED_BATCH = 16
 MAX_CHARS = 100_000                         # only used by /file (whole-document paste)
 
@@ -239,7 +242,20 @@ def embed(texts: list[str]) -> list[list[float]]:
 
 
 def embed_query(question: str) -> list[float]:
-    return embed([f"Instruct: {QUERY_TASK}\nQuery: {question}"])[0]
+    return embed_queries([question])[0]
+
+
+def embed_queries(questions: list[str]) -> list[list[float]]:
+    return embed([f"Instruct: {QUERY_TASK}\nQuery: {q}" for q in questions])
+
+
+SENTENCE_END = re.compile(r"(?<=[.?!])\s+")
+
+
+def question_parts(question: str) -> list[str]:
+    """The question's sentences of four words or more, or none when it is a single sentence."""
+    parts = [s for s in SENTENCE_END.split(question.strip()) if len(WORD.findall(s.lower())) >= 4]
+    return parts if len(parts) > 1 else []
 
 
 def chunk_page(chunk):
@@ -465,18 +481,22 @@ def retrieve(question: str, only: list[str] | None = None, board_id: str | None 
             IsEmptyCondition(is_empty=PayloadField(key="board_id")),
         ]))
     flt = Filter(must=must) if must else None
-    qvec = embed_query(question)
+    parts = question_parts(question) if SPLIT_QUESTION else []
+    vectors = embed_queries([question] + parts)   # one embedding call for all of them
     if UNLOAD_AFTER_QUERY:
         unload_model(EMBED_MODEL)
     # Fetch extra so identical chunks (a file indexed twice, repeated boilerplate) do not use up slots.
     depth = TOP_N_CHUNKS * 3
-    candidates = qdrant.query_points(COLLECTION, query=qvec, limit=depth, query_filter=flt).points
+    rankings = [qdrant.query_points(COLLECTION, query=v, limit=depth, query_filter=flt).points for v in vectors]
     if HYBRID_SEARCH:
-        # Reciprocal rank fusion: a chunk near the top of both rankings wins.
         everything, _ = qdrant.scroll(COLLECTION, scroll_filter=flt, limit=100_000,
                                       with_payload=True, with_vectors=False)
+        rankings.append(keyword_rank(question, everything)[:depth])
+    candidates = rankings[0]
+    if len(rankings) > 1:
+        # Reciprocal rank fusion: a chunk near the top of several rankings wins.
         fused, by_id = Counter(), {}
-        for ranking in (candidates, keyword_rank(question, everything)[:depth]):
+        for ranking in rankings:
             for rank, point in enumerate(ranking, 1):
                 fused[point.id] += 1 / (60 + rank)
                 by_id.setdefault(point.id, point)

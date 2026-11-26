@@ -20,6 +20,11 @@ class RankTargetsTests(unittest.TestCase):
         self.assertEqual(ranks, {"fast mode": 3, "missing": None})
         self.assertEqual(duplicates, 1)   # the second chunk differs only in whitespace
 
+    def test_every_setting_names_a_real_rag_option(self):
+        for setting in retrieval_check.SETTINGS.values():
+            for name in setting:
+                self.assertTrue(hasattr(retrieval_check.rag, name), name)
+
     def test_every_prompt_has_targets(self):
         self.assertEqual(set(retrieval_check.TARGETS), set(retrieval_check.load_prompts()))
 

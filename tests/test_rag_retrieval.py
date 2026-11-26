@@ -90,6 +90,43 @@ class RetrievalTests(unittest.TestCase):
         ranked = [p.id for p in rag.keyword_rank("a shared 400 Kbit/s I2C bus for the sensors", points)]
         self.assertEqual(ranked, [1, 2, 0])   # "Clocks and Timers" shares no word with the question
 
+    def test_question_parts_are_its_sentences_of_four_words_or_more(self):
+        question = ("Which download method is most practical? Identify the UART pin mappings. "
+                    "Cite pages. The board uses 3.3 V logic.")
+        self.assertEqual(rag.question_parts(question), [
+            "Which download method is most practical?", "Identify the UART pin mappings.",
+            "The board uses 3.3 V logic."])
+        self.assertEqual(rag.question_parts("What voltage does the ESP32 need?"), [])
+
+    def test_split_question_brings_in_a_chunk_only_one_sentence_matches(self):
+        self.chunks = ["Boot modes and strapping", "Download boot over UART0", "Chip boot control",
+                       "U0TXD, Function = GPIO1"]
+        question = "Which boot mode should the board use for flashing? Identify the serial transmit wiring."
+
+        # The pin chunk is near the second sentence only; the whole question sits near the boot chunks.
+        def vector(text):
+            if text.startswith("Instruct:"):
+                return [0.0, 1.0] if "serial transmit" in text and "boot mode" not in text else [1.0, 0.0]
+            return [0.0, 1.0] if "U0TXD" in text else [1.0, 0.0]
+
+        with patch.object(rag, "embed", side_effect=lambda texts: [vector(t) for t in texts]):
+            rag.ingest("ESP32.pdf")
+            # Top 3 of 4: ranked first for one sentence, it edges out the weakest boot chunk.
+            with patch.object(rag, "TOP_N_CHUNKS", 3), patch.object(rag, "HYBRID_SEARCH", False):
+                whole = [h.payload["text"] for h in rag.retrieve(question)]
+                with patch.object(rag, "SPLIT_QUESTION", True):
+                    split = [h.payload["text"] for h in rag.retrieve(question)]
+        self.assertNotIn("U0TXD, Function = GPIO1", whole)
+        self.assertIn("U0TXD, Function = GPIO1", split)
+
+    def test_split_question_embeds_all_parts_in_one_call(self):
+        rag.ingest("ESP32.pdf")
+        with patch.object(rag, "embed", side_effect=lambda texts: [[1.0, 0.0] for _ in texts]) as embed, \
+                patch.object(rag, "SPLIT_QUESTION", True):
+            rag.retrieve("Which timers are there? Which watchdogs reset the chip?")
+        self.assertEqual(embed.call_count, 1)
+        self.assertEqual(len(embed.call_args.args[0]), 3)   # whole question plus two sentences
+
     def test_rag_prompt_forbids_values_from_general_knowledge(self):
         # Qwen once gave U0TXD as GPIO3 "in typical ESP32 pinouts" when the pin table was not retrieved.
         hit = SimpleNamespace(payload={"source": "ESP32.pdf", "page": 23, "text": "GPIO0 = 0"})
