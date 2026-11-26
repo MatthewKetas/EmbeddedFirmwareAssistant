@@ -77,9 +77,9 @@ class RetrievalTests(unittest.TestCase):
         with patch.object(rag, "embed", side_effect=lambda texts: [vector(t) for t in texts]):
             rag.ingest("ESP32.pdf")
             with patch.object(rag, "TOP_N_CHUNKS", 2):
-                plain = [h.payload["text"] for h in rag.retrieve(question)]
-                with patch.object(rag, "HYBRID_SEARCH", True):
-                    hybrid = [h.payload["text"] for h in rag.retrieve(question)]
+                with patch.object(rag, "HYBRID_SEARCH", False):
+                    plain = [h.payload["text"] for h in rag.retrieve(question)]
+                hybrid = [h.payload["text"] for h in rag.retrieve(question)]   # on by default
         self.assertNotIn("Feature List - Fast mode (400 Kbit/s)", plain)
         self.assertEqual(hybrid[0], "Feature List - Fast mode (400 Kbit/s)")
 

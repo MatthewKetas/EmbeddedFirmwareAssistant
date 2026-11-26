@@ -67,9 +67,10 @@ QDRANT_PATH = str(SCRIPT_DIR / "qdrant_data")   # on-disk vector library, no ser
 COLLECTION = "docs"
 TOP_N_CHUNKS = 10                                # chunks sent to the chat model per question
 # Also rank chunks by shared words (BM25) and merge that with the vector ranking. Embeddings
-# missed passages that repeat the question's exact terms, e.g. "400 Kbit/s" for I2C.
-# Off until retrieval_check.py shows it helps.
-HYBRID_SEARCH = False
+# missed passages that repeat the question's exact terms: on the Milestone 1 prompts this moved
+# the I2C 400 Kbit/s passage from rank 23 to 8 and the power-up timing table from 14 to 6,
+# dropped nothing from the top 10, and added about 0.1 s per question.
+HYBRID_SEARCH = True
 EMBED_BATCH = 16
 MAX_CHARS = 100_000                         # only used by /file (whole-document paste)
 
