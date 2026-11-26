@@ -17,6 +17,7 @@ from pathlib import Path
 
 FLAGS = re.I | re.S
 MICRO = r"(µs|us|μs|\\?mu)"
+WORD = r"\w+[\s*`'_,/-]+"   # a word and what follows it, without crossing a sentence end
 # Key facts per prompt: (name with ESP32.pdf page, pattern the answer must contain).
 FACTS = {
     "P1": [("RSA+SHA accelerators p32", r"(?=.*\bRSA\b)(?=.*\bSHA)(?=.*accelerat)"),
@@ -50,22 +51,28 @@ FACTS = {
 ERRORS = {
     "P1": [("says no RSA accelerator", r"(does not|doesn.t|no) (include |have )?(a )?(dedicated |hardware )?RSA (accelerat|hardware)"),
            ("says RSA limit is 3072", r"(up to|maximum of|max(imum)?|≤|<=) ?3,?072|3,?072[- ]bit (limit|maximum)", r"4,?096")],
-    "P2": [("says 400 Kbit/s not documented", r"(not|n.t|no\b).{0,90}(400 ?k|fast[- ]mode|i2c (bus )?frequency|frequency limit)",
+    # A negation, then a verb of documenting, then the I2C speed itself.
+    "P2": [("says 400 Kbit/s not documented",
+            rf"\b(not|n.t|no)\b[\s*]{{0,4}}({WORD}){{0,4}}?(confirm|state|specif|list|mention|provide|give|include|establish)\w*[\s*]+"
+            rf"({WORD}){{0,8}}?(400 ?k|fast[- ]mode|(i2c|clock|bus)[\s/]+({WORD}){{0,2}}?(speed|frequenc))",
             r"pull-up|integrity|SPI clock|supported via|natively support|pF|drive strength"),
            ("says SPI0 usable for display", r"use \*{0,2}SPI0", r"do not|don.t|avoid"),
            ("I2C full-duplex", r"I2C.{0,60}full[- ]duplex")],
-    "P3": [("download needs GPIO2 high", r"download.{0,120}GPIO2\W{0,6}(=|must be|:)?\W{0,6}(1\b|high)\b"),
+    # The first GPIO2 after "download", within one table cell: download and normal-boot rows sit side by side.
+    "P3": [("download needs GPIO2 high", r"download(?:(?!GPIO2|normal|SPI boot|flash boot)[^|]){0,120}GPIO2\W{0,6}(=|must be|:)?\W{0,6}(1\b|high)\b"),
            ("normal boot needs GPIO2 high", r"(normal|flash|spi) boot.{0,80}GPIO2\W{0,6}(=|must be|:)?\W{0,6}(1\b|high)"),
            ("invented eFuse name", r"SEC_BOOT_JTAG|(?<!uart_)\bDOWNLOAD_DIS\b|Download Mode Disable eFuse"),
            ("U0TXD given as GPIO3", r"U0TXD\W{1,6}(is\s+)?(also\s+)?(listed\s+as\s+|=\s*)?GPIO\s*3\b"),
            ("SPI boot labelled SDIO download", r"SDIO Download Boot\W{1,6}(requires\s+)?\W{0,6}GPIO0\W{0,6}=\W{0,6}1\b")],
     "P4": [("wrong LDO current", r"(200|300|1\.8) ?mA"),
            ("wrong supply range", r"2\.(7|8|95) ?V|2\.0 ?V to 3\.6"),
-           ("MTDI=0 gives 1.8 V", r"MTDI\W{0,4}=\W{0,4}0\W.{0,60}1\.8 ?V"),
+           # Within one clause, and before any mention of the other MTDI value.
+           ("MTDI=0 gives 1.8 V", r"MTDI\s*=\s*0\b(?:(?!MTDI)[^.;)\n]){0,40}(1\.8 ?V|LDO)"),
            ("UART TX on input-only pins", r"input[- ]only.{0,120}(UART TX|TX/RX|U.?_TXD)"),
            ("VDDA called a digital domain", r"digital power (supplies|domains)\W{0,4}(are|:)\W{0,4}VDDA")],
-    "P5": [("says datasheet has no general timers", r"(not|n.t|no|only).{0,120}(general[- ]purpose|periodic|dedicated) (hardware )?timer",
-            r"GPTIMER|General Purpose Timers|configuration|register"),
+    "P5": [("says datasheet has no general timers",
+            rf"\b(not|n.t|no)\b[\s*]{{0,4}}({WORD}){{0,5}}?(general[- ]purpose|dedicated|periodic)[\s*]+({WORD}){{0,2}}?timers?",
+            r"GPTIMER|configuration|register"),
            ("invented WDT range", r"32,?768 ?ms|1 ms to 32")],
 }
 
