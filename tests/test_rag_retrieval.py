@@ -122,6 +122,19 @@ class PrepareChunksTests(unittest.TestCase):
                                       "- Fast mode (400 Kbit/s)")
         self.assertEqual(prepared[0], self.TEXTS[0])   # no numbered section before it
 
+    def test_repeated_table_cells_are_kept_once(self):
+        # Docling repeats a merged cell once per column: chunk 24 of ESP32.pdf held this nine times.
+        cell = "VDDA, Function = Analogpowersupply(2.3V∼3.6V)."
+        text = ("2.2 PinOverview\nTable 2-1. Pin Overview\nVDDA, No. = 1. VDDA, Type = P. " + " ".join([cell] * 9)
+                + " LNA_IN, No. = 2. U0TXD, Function = GPIO1,. U0TXD, Function = U0TXD,.")
+        (_, prepared), = rag.prepare_chunks([text])
+        self.assertEqual(prepared, "2.2 PinOverview\nTable 2-1. Pin Overview\nVDDA, No. = 1. VDDA, Type = P. "
+                                   + cell + " LNA_IN, No. = 2. U0TXD, Function = GPIO1,. U0TXD, Function = U0TXD,.")
+
+    def test_prose_and_decimal_numbers_are_left_alone(self):
+        text = "4.2.1 CPUClock\nThe PLL generates a 160 MHz clock. It runs at 2.4 GHz. The PLL generates a 160 MHz clock."
+        self.assertEqual(rag.prepare_chunks([text]), [(0, text)])
+
     def test_a_numbered_note_is_not_a_section(self):
         texts = ["2.2 PinOverview\nTable 2-1", "1. Functionnames:\nCLK_OUT clock output",
                  "Pin Assignment\nFor SPI, the pins are multiplexed"]

@@ -257,8 +257,33 @@ CONTINUED = "cont'd from previous page"
 NUMBERED_HEADING = re.compile(r"^([0-9]+(\.[0-9]+)*|[A-Z]\.[0-9]+)\.?\s+\S")
 
 
+TABLE_CELL = re.compile(r"^[^=\n]{1,120} = ")
+
+
+def collapse_table_cells(text: str) -> str:
+    """Keep each "row, column = value." segment once per chunk.
+
+    Docling repeats a merged table cell once per column it spans; in ESP32.pdf one pin row
+    repeated its description nine times, which drowned the useful cells when embedded.
+    """
+    seen, lines = set(), []
+    for line in text.split("\n"):
+        parts = re.split(r"(?<=\.)\s+", line)
+        kept = []
+        for part in parts:
+            key = " ".join(part.split())
+            if TABLE_CELL.match(part):
+                if key in seen:
+                    continue
+                seen.add(key)
+            kept.append(part)
+        lines.append(line if len(kept) == len(parts) else " ".join(kept))
+    return "\n".join(lines)
+
+
 def prepare_chunks(texts: list[str]) -> list[tuple[int, str]]:
-    """Drop front matter and give generic headings their section, keeping each chunk's index.
+    """Drop front matter, collapse repeated table cells and give generic headings their section,
+    keeping each chunk's index.
 
     Docling keeps only the nearest heading, so "Feature List" under "4.8.4 I2CInterface"
     never mentions I2C; prefixing the last numbered heading lets retrieval match it.
@@ -275,7 +300,7 @@ def prepare_chunks(texts: list[str]) -> list[tuple[int, str]]:
             section = heading.strip()
         elif section:
             text = f"{section} > {text}"
-        kept.append((i, text))
+        kept.append((i, collapse_table_cells(text)))
     return kept
 
 
