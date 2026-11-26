@@ -576,14 +576,12 @@ ANSWER_RULES = (
     "- When context is provided, take facts only from it and say in one line what it lacks.\n"
     "- Label design inferences as inferences."
 )
-CODE_REVIEW_RULES = (
-    "\nFor code reviews: list findings most severe first, each with file, line and a one-line fix; "
-    "put real bugs before style nits."
-)
 
 
 def system_prompt(model: str) -> str:
-    return ANSWER_RULES + (CODE_REVIEW_RULES if model == CODE_MODEL else "")
+    # Only Gemma gets the rules. With them, Qwen's code reviews found 10 of 24 planted bugs, against
+    # 17 without, and often opened with "No bugs found" (RAG/review_bench.py).
+    return ANSWER_RULES if model == LEXICAL_MODEL else ""
 
 
 def stream_reply(messages: list, model: str, echo: bool = True) -> tuple[str, dict]:

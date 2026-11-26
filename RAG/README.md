@@ -157,9 +157,20 @@ Every chat request now starts with a short system prompt (`ANSWER_RULES` in [rag
 | First rules: "briefly", under about 350 words | 52/78 (67%) | 511 | 67/78 (86%) | 672 | 0 |
 | Final rules: cover every part, no length limit | 62/78 (79%) | 827 | 67/78 (86%) | 1044 | 0 |
 
-The first version shortened answers by 40-60% but dropped facts the questions need, such as the 2.3-3.6 V supply range, the strapping and input-only pins and the LDO's 40 mA limit, so I replaced it. With the final rules, Gemma, which answers datasheet questions, states as many key facts as before at the same length. Qwen's datasheet answers are 37% shorter, about 13 s less at 50 tok/s, but state fewer key facts; that matters only if Qwen answers datasheet questions again. I confirmed every flagged error by hand: none with retrieval in any version. Without retrieval, Qwen made three real errors with the final rules (an RSA limit of 3072 bits instead of 4096, and LDO limits of 300 mA and 200 mA instead of 40 mA). How the rules affect Qwen's code reviews is untested, because the pass@k test bypasses them.
+The first version shortened answers by 40-60% but dropped facts the questions need, such as the 2.3-3.6 V supply range, the strapping and input-only pins and the LDO's 40 mA limit, so I replaced it. With the final rules, Gemma, which answers datasheet questions, states as many key facts as before at the same length. Qwen's datasheet answers are 37% shorter, about 13 s less at 50 tok/s, but state fewer key facts; that matters only if Qwen answers datasheet questions again. I confirmed every flagged error by hand: none with retrieval in any version. Without retrieval, Qwen made three real errors with the final rules (an RSA limit of 3072 bits instead of 4096, and LDO limits of 300 mA and 200 mA instead of 40 mA).
 
 Qwen ran at about 15 tok/s during the first-rules run even with the screen timeout set to two hours, so the slow state is not only caused by the screen turning off.
+
+## My code-review check
+
+To test the rules on Qwen's actual job, I wrote four short C files with two planted bugs each, the more severe first: a ring buffer that writes one byte past its end and never checks for full, an ADC average whose `uint16_t` sum overflows and that divides by a count that may be zero, an I2C read that copies `len` bytes into a 4-byte buffer and ignores the write result, and a timer whose ISR flag is not `volatile` and whose elapsed time returns 0 on wrap. [review_bench.py](review_bench.py) sends each file to Qwen as a retrieved code snippet, three times with the rules and three without. I confirmed every match by hand and tightened the patterns that matched wrongly.
+
+| Rules | Planted bugs found | Median answer tokens | Median time |
+|---|---|---|---|
+| Gemma's rules plus a code-review rule | 10/24 | 280 | 5.8 s |
+| None | 17/24, plus 2 unclear | 833 | 15.0 s |
+
+With the rules, Qwen opened four of nine weak reviews with "No bugs found", called the overflowing `uint16_t` sum sufficient, and found neither I2C bug in any run; it seems to read "say what the context lacks" as a reason to stop. Without them it found the ring-buffer overrun and both ADC bugs every time, though never the missing full check. Qwen now gets no system prompt; Gemma keeps the rules.
 
 ## My evidence
 

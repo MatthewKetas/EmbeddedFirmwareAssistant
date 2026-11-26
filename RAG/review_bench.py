@@ -1,4 +1,4 @@
-"""Time the code model's reviews of small C files with planted bugs, with and without the answer rules.
+"""Time the code model's reviews of small C files with planted bugs, with and without answer rules.
 
 Each file in review_cases/ has known bugs, the most severe listed first. A bug counts as found when
 the review matches its pattern; the snippets are printed for a person to confirm. "Severe first"
@@ -20,8 +20,12 @@ import rag
 CASES_DIR = rag.SCRIPT_DIR / "review_cases"
 RESULTS = rag.SCRIPT_DIR / "bench_results"
 QUESTION = "Review this code for bugs."
+# The rules tested as "on": Gemma's answer rules plus the code-review rule Qwen had until this bench.
+REVIEW_RULE = ("\nFor code reviews: list findings most severe first, each with file, line and a one-line fix; "
+               "put real bugs before style nits.")
 FLAGS = re.I | re.S
-# file -> bugs, most severe first: (name, text on the bug's line, pattern a review that found it matches).
+# file -> bugs, most severe first: (name, text on the bug's line, pattern a review that found it matches[,
+# pattern that clears the match when found nearby, e.g. a review calling the planted bug correct]).
 BUGS = {
     "uart_ring.c": [
         ("wrap check lets head reach RB_SIZE: writes past the buffer", "if (next > RB_SIZE)",
@@ -37,15 +41,19 @@ BUGS = {
     ],
     "sensor_i2c.c": [
         ("len is not checked against buf[4]: buffer overflow", "uint8_t buf[4];",
-         r"\blen\b.{0,120}(overflow|exceed|bound|larger|greater|> ?4|sizeof)|(overflow|bounds).{0,120}\blen\b"),
+         # Comparing len with buf, not with what the sensor returns.
+         r"\blen\b.{0,80}(greater|larger|more|exceeds?)( than)?.{0,40}(\b4\b|buf|sizeof)|\blen\W{0,3}\s*<=?\s*(4|sizeof)"
+         r"|\blen\s*>\s*4|(stack|buffer) overflow.{0,120}\blen\b|\blen\b.{0,120}(stack|buffer) overflow"),
         ("i2c_write result is ignored", "i2c_write(SENSOR_ADDR, &reg, 1);",
-         r"(return value|result|ignor|unchecked|not checked|error).{0,80}i2c_write|i2c_write.{0,80}(return value|result|ignor|unchecked|not checked)"),
+         r"(return value|result|ignor|unchecked|not checked|error).{0,80}i2c_write|i2c_write.{0,80}(return value|result|ignor|unchecked|not checked)",
+         r"(provide|no|lacks?) information"),
     ],
     "tick_timer.c": [
         ("tick_flag and tick_ms are not volatile: wait_for_tick can spin forever", "static bool tick_flag;",
          r"volatile"),
         ("elapsed_since returns 0 when the counter wraps", "if (now < start) {",
-         r"(wrap|overflow|roll ?over).{0,120}(now|start|tick|millis|elapsed)|(now|start|tick_ms|elapsed_since).{0,120}(wrap|roll ?over)"),
+         r"(wrap|overflow|roll ?over).{0,120}(now|start|tick|millis|elapsed)|(now|start|tick_ms|elapsed_since).{0,120}(wrap|roll ?over)",
+         r"(?<!not )(?<!n't )\bhandles?\b[^.]{0,40}(wrap|overflow)"),
     ],
 }
 
@@ -65,9 +73,12 @@ def bug_line(name: str, anchor: str) -> int:
 def score(answer: str, name: str) -> dict:
     """Which planted bugs the review names, and whether the most severe one comes first."""
     positions = {}
-    for bug, _, pattern in BUGS[name]:
-        if match := re.search(pattern, answer, FLAGS):
-            positions[bug] = match.start()
+    for bug, _, pattern, *clears in BUGS[name]:
+        for match in re.finditer(pattern, answer, FLAGS):
+            nearby = answer[max(0, match.start() - 100):match.end() + 100]
+            if not (clears and re.search(clears[0], nearby, FLAGS)):
+                positions[bug] = match.start()
+                break
     severe = BUGS[name][0][0]
     return {"found": [bug for bug, *_ in BUGS[name] if bug in positions], "of": len(BUGS[name]),
             "severe_first": severe in positions and positions[severe] == min(positions.values())}
@@ -75,7 +86,7 @@ def score(answer: str, name: str) -> dict:
 
 def snippets(answer: str, name: str, found: list[str]) -> list[tuple[str, str]]:
     out = []
-    for bug, _, pattern in BUGS[name]:
+    for bug, _, pattern, *_ in BUGS[name]:
         if bug in found and (match := re.search(pattern, answer, FLAGS)):
             out.append((bug, " ".join(answer[max(0, match.start() - 80):match.end() + 60].split())))
     return out
@@ -108,11 +119,11 @@ def main() -> None:
     out = RESULTS / f"{time.strftime('%Y%m%d-%H%M%S')}-{args.label}.jsonl"
     print(f"Reviews go to {out}")
     rag.client = rag.OpenAI(base_url=rag.BASE_URL, api_key=rag.API_KEY)
-    with_rules = rag.system_prompt
+    default_rules = rag.system_prompt
     rows = []
     try:
         for rules in settings:
-            rag.system_prompt = with_rules if rules else (lambda model: "")
+            rag.system_prompt = (lambda model: rag.ANSWER_RULES + REVIEW_RULE) if rules else (lambda model: "")
             for name in cases:
                 prompt = rag.build_rag_prompt(QUESTION, [case_hit(name)])
                 for run in range(1, args.runs + 1):
@@ -125,7 +136,7 @@ def main() -> None:
                     with out.open("a", encoding="utf-8") as f:
                         f.write(json.dumps(row) + "\n")
     finally:
-        rag.system_prompt = with_rules
+        rag.system_prompt = default_rules
         rag.client.close()
         rag.unload_model(rag.CODE_MODEL)
 
@@ -140,7 +151,7 @@ def main() -> None:
     for row in rows:
         tag = f"rules {'on' if row['rules'] else 'off'} {row['case']} run {row['run']}"
         for bug, text in snippets(row["answer"], row["case"], row["found"]):
-            line = bug_line(row["case"], next(a for b, a, _ in BUGS[row["case"]] if b == bug))
+            line = bug_line(row["case"], next(a for b, a, *_ in BUGS[row["case"]] if b == bug))
             print(f"- {tag}: found '{bug}' (line {line})\n    ...{text}...")
         for bug, *_ in BUGS[row["case"]]:
             if bug not in row["found"]:

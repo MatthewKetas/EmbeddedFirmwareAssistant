@@ -14,7 +14,7 @@ class ReviewBenchTests(unittest.TestCase):
     def test_every_case_file_exists_and_each_bug_line_is_found(self):
         self.assertEqual(sorted(review_bench.BUGS), sorted(p.name for p in review_bench.CASES_DIR.glob("*.c")))
         for name, bugs in review_bench.BUGS.items():
-            for bug, anchor, _ in bugs:
+            for bug, anchor, *_ in bugs:
                 with self.subTest(bug=bug):
                     review_bench.bug_line(name, anchor)   # raises if the anchor is not in the file
 
@@ -47,6 +47,35 @@ class ReviewBenchTests(unittest.TestCase):
             ("uart_ring.c", "The ISR never checks whether the buffer is full, so it overwrites unread data", 1),
             ("tick_timer.c", "tick_flag must be declared volatile", 0),
             ("tick_timer.c", "elapsed_since returns 0 after tick_ms wraps around", 1),
+        ]
+        for name, answer, index in cases:
+            with self.subTest(answer=answer):
+                self.assertIn(review_bench.BUGS[name][index][0], review_bench.score(answer, name)["found"])
+
+    def test_matches_from_the_first_run_that_were_wrong_are_cleared(self):
+        cases = [
+            # Says the planted wrap bug is correct.
+            ("tick_timer.c", "*(Note: The `elapsed_since` function handles 32-bit wrap-around correctly by returning 0 if `now < start`)*", 1),
+            ("tick_timer.c", "(though the logic handles overflow by returning 0 if `now < start`, the variable `tick_ms` is modified", 1),
+            # Mentions i2c_write only to say the context does not cover it.
+            ("sensor_i2c.c", "The context does not provide information on whether other logic bugs exist "
+                             "(e.g., bounds checking, error handling in `i2c_write`).", 1),
+            # Compares len with what the sensor returns, not with buf.
+            ("sensor_i2c.c", "The function `sensor_read` passes `len` to `i2c_read`. If `len` is greater than the "
+                             "number of bytes the sensor returns, or if the sensor", 0),
+        ]
+        for name, answer, index in cases:
+            with self.subTest(answer=answer):
+                self.assertNotIn(review_bench.BUGS[name][index][0], review_bench.score(answer, name)["found"])
+
+    def test_correct_findings_from_the_first_run_are_still_matched(self):
+        cases = [
+            ("sensor_i2c.c", "If the `len` argument passed to `sensor_read` is greater than 4, this will cause a buffer overflow on the stack.", 0),
+            ("sensor_i2c.c", "The function should validate that `len <= sizeof(buf)`.", 0),
+            ("sensor_i2c.c", "It ignores the return value of `i2c_write(SENSOR_ADDR, &reg, 1);`.", 1),
+            ("tick_timer.c", "`elapsed_since` returns 0 on overflow instead of wrapping; fix by allowing unsigned "
+                             "wrap-around (return `now - start` unconditionally).", 1),
+            ("tick_timer.c", "elapsed_since does not handle wrap-around: it returns 0 once tick_ms rolls over.", 1),
         ]
         for name, answer, index in cases:
             with self.subTest(answer=answer):
