@@ -69,6 +69,29 @@ class RetrievalTests(unittest.TestCase):
                 hits = rag.retrieve("timers")
         self.assertEqual(sorted(h.payload["text"] for h in hits), ["general-purpose timers", "watchdog timers"])
 
+    def test_split_query_finds_a_passage_that_answers_one_sentence(self):
+        self.chunks = ["I2C Fast mode 400 Kbit/s", "board overview", "flash pins", "boot modes"]
+        question = "Which interfaces fit this custom board design overall? It needs an I2C bus at 400 Kbit/s."
+
+        def vector(text):
+            # The whole question sits near the overview chunks; only its I2C sentence sits near I2C.
+            if text.startswith("Instruct:"):
+                return [0.0, 1.0] if "Query: It needs an I2C" in text else [1.0, 0.05]
+            return [0.0, 1.0] if "I2C" in text else [1.0, 0.0]
+
+        with patch.object(rag, "embed", side_effect=lambda texts: [vector(t) for t in texts]):
+            rag.ingest("ESP32.pdf")
+            with patch.object(rag, "TOP_N_CHUNKS", 1):
+                whole = rag.retrieve(question)
+                with patch.object(rag, "SPLIT_QUERY", True):
+                    split = rag.retrieve(question)
+        self.assertNotEqual(whole[0].payload["text"], "I2C Fast mode 400 Kbit/s")
+        self.assertEqual([h.payload["text"] for h in split], ["I2C Fast mode 400 Kbit/s"])
+
+    def test_query_sentences(self):
+        self.assertEqual(rag.query_sentences("One two three. Four five six? Seven."),
+                         ["One two three.", "Four five six?", "Seven."])
+
 
 class PrepareChunksTests(unittest.TestCase):
     # First lines and bodies as Docling produced them for ESP32.pdf.
