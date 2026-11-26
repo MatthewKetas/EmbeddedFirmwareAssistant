@@ -516,8 +516,11 @@ def build_rag_prompt(question: str, hits, board_context: str = "") -> str:
     if board_context:
         citation += ", [remember:key] for saved facts, or [file.svd] for device data"
     return (
-        f"Answer the question using the context below. Cite sources like {citation}. "
-        "If the answer isn't in the context, say so.\n\n"
+        f"Answer the question using only the context below. Cite sources like {citation}. "
+        # Without this, models filled gaps from memory, e.g. "U0TXD is GPIO3 in typical pinouts".
+        "Every value, pin number, register or name you state must appear in the context; "
+        "do not fill gaps from general knowledge. If the context lacks something the question "
+        "asks for, say that it is not in the context.\n\n"
         f"=== CONTEXT ===\n{context}\n=== END CONTEXT ===\n\n"
         f"Question: {question}"
     )

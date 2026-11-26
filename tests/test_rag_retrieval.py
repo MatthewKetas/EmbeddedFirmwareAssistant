@@ -90,6 +90,14 @@ class RetrievalTests(unittest.TestCase):
         ranked = [p.id for p in rag.keyword_rank("a shared 400 Kbit/s I2C bus for the sensors", points)]
         self.assertEqual(ranked, [1, 2, 0])   # "Clocks and Timers" shares no word with the question
 
+    def test_rag_prompt_forbids_values_from_general_knowledge(self):
+        # Qwen once gave U0TXD as GPIO3 "in typical ESP32 pinouts" when the pin table was not retrieved.
+        hit = SimpleNamespace(payload={"source": "ESP32.pdf", "page": 23, "text": "GPIO0 = 0"})
+        prompt = rag.build_rag_prompt("Which pin is U0TXD?", [hit])
+        self.assertIn("Every value, pin number, register or name you state must appear in the context", prompt)
+        self.assertIn("do not fill gaps from general knowledge", prompt)
+        self.assertIn("[ESP32.pdf, p.23]\nGPIO0 = 0", prompt)
+
 
 class PrepareChunksTests(unittest.TestCase):
     # First lines and bodies as Docling produced them for ESP32.pdf.
