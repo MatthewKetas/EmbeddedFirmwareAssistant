@@ -20,7 +20,7 @@ TARGETS = {
            ("SPI0-SPI3 roles, p.36", r"SPI0\s*is\s*used\s*as\s*a\s*buffer"),
            ("UART pins via GPIO Matrix, p.37", r"pins\s*for\s*UART\s*can\s*be\s*chosen"),
            ("strapping and input-only counts, p.4", r"strapping\s*GPIOs")],
-    "P3": [("power-up timing tSTBL 50 us, p.19", r"STBL|Power-up\s*and\s*Reset"),
+    "P3": [("power-up timing tSTBL 50 us, p.19", r"STBL"),
            ("strapping tSU/tH, Table 3-2", r"Setup\s*time\s*is\s*the\s*time\s*reserved"),
            ("boot mode table, Table 3-3", r"Joint\s*Download\s*Boot|JointDownloadBoot"),
            ("uart_download_dis, Section 3", r"uart_download_dis")],
@@ -28,7 +28,7 @@ TARGETS = {
            ("VDD_SDIO LDO 40 mA, p.51", r"40\s*mA"),
            ("MTDI selects VDD_SDIO, p.24", r"MTDI\s*=\s*1"),
            ("2 kOhm resistor for 1.8 V, p.19", r"2\s*k\s*(Ω|ohm)")],
-    "P5": [("four general-purpose timers, p.31", r"general-purpose\s*timers"),
+    "P5": [("four general-purpose timers, p.31", r"four\s*general-purpose\s*timers"),
            ("three watchdog timers, p.31", r"three\s*watchdog\s*timers")],
 }
 
@@ -66,7 +66,11 @@ def main() -> None:
                 where = f"rank {rank}" if rank else f"not in top {args.depth}"
                 note = "" if rank and rank <= top_n else "   <- not sent to the model"
                 print(f"  {name:42} {where}{note}")
-            print(f"  top {top_n}: " + ", ".join(rag.source_label(h.payload) for h in hits[:top_n]) + "\n")
+            # First line of each chunk: Docling puts the heading path there, which shows front matter.
+            for rank, h in enumerate(hits[:top_n], 1):
+                first = " ".join(h.payload["text"].split("\n", 1)[0].split())[:70]
+                print(f"    {rank:2}. {rag.source_label(h.payload):22} {first}")
+            print()
     finally:
         rag.TOP_N_CHUNKS = top_n
         rag.teardown()
