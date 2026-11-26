@@ -132,6 +132,12 @@ def resolve_path(path: str) -> Path:
     p = Path(path.strip('"\'')).expanduser()
     if not p.is_absolute():
         p = DOCS_DIR / p
+    # Use the name as stored on disk. The library keys chunks by file name, and on Windows
+    # "esp32.pdf" opens ESP32.pdf, which once left the datasheet indexed twice.
+    if p.parent.is_dir():
+        names = {entry.name: entry for entry in p.parent.iterdir()}
+        if p.name not in names:
+            p = next((e for n, e in names.items() if n.lower() == p.name.lower()), p)
     if not p.exists():
         raise FileNotFoundError(f"Not found: {p}")
     return p
@@ -250,10 +256,11 @@ def ingest(path_str: str, board_id: str | None = None) -> None:
         unload_model(EMBED_MODEL)
 
     ensure_collection()
-    # Re-adding the same file replaces its old chunks
+    # Re-adding the same file replaces its old chunks, including a copy indexed under other case.
+    same_file = [s for s in list_sources() if s.lower() == path.name.lower()] or [path.name]
     qdrant.delete(
         COLLECTION,
-        points_selector=Filter(must=[FieldCondition(key="source", match=MatchValue(value=path.name))]),
+        points_selector=Filter(must=[FieldCondition(key="source", match=MatchAny(any=same_file))]),
     )
     points = [
         PointStruct(
@@ -371,10 +378,17 @@ def retrieve(question: str, only: list[str] | None = None, board_id: str | None 
     qvec = embed_query(question)
     if UNLOAD_AFTER_QUERY:
         unload_model(EMBED_MODEL)
+    # Fetch extra so identical chunks (a file indexed twice, repeated boilerplate) do not use up slots.
     res = qdrant.query_points(
-        COLLECTION, query=qvec, limit=TOP_N_CHUNKS, query_filter=flt,
+        COLLECTION, query=qvec, limit=TOP_N_CHUNKS * 3, query_filter=flt,
     )
-    return res.points
+    hits, seen = [], set()
+    for point in res.points:
+        text = " ".join(point.payload["text"].split())
+        if text not in seen:
+            seen.add(text)
+            hits.append(point)
+    return hits[:TOP_N_CHUNKS]
 
 
 def list_sources() -> list[str]:
