@@ -140,6 +140,28 @@ class ReviewBenchTests(unittest.TestCase):
         for word in ("scope", "dangling", "break", "fall", "precedence", "operator"):
             self.assertNotIn(word, checklist)
 
+class SamplingSwitchTests(unittest.TestCase):
+    def test_shared_sampling_is_used_for_the_run_and_restored_after(self):
+        seen = []
+
+        def fake_reply(messages, model, echo=True):
+            seen.append(rag.sampling(model, False))
+            return "no bugs", {"completion_tokens": 2, "total_s": 0.1}
+
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            patch.object(sys, "argv", ["review_bench.py", "--prompts", "checklist", "--runs", "1",
+                                       "--cases", "adc_average.c", "--sampling", "shared"]),
+            patch.object(review_bench, "RESULTS", Path(self.enterContext(__import__("tempfile").TemporaryDirectory()))),
+            patch.object(rag, "OpenAI", MagicMock()),
+            patch.object(rag, "stream_reply", side_effect=fake_reply),
+            patch.object(rag, "unload_model", lambda m: None),
+        ):
+            review_bench.main()
+        self.assertEqual(seen, [{"temperature": rag.TEMPERATURE, "top_p": rag.TOP_P, "top_k": rag.TOP_K}])
+        self.assertEqual(rag.sampling(rag.CODE_MODEL, False)["presence_penalty"], 1.5)   # restored
+
+
 class NoRulesTests(unittest.TestCase):
     def test_no_system_message_is_sent_when_the_rules_are_off(self):
         client = MagicMock()

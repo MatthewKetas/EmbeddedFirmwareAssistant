@@ -160,6 +160,8 @@ def main() -> None:
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--cases", nargs="+", help="file names in review_cases/ (default: all)")
     parser.add_argument("--label", default="review")
+    parser.add_argument("--sampling", choices=["card", "shared"], default="card",
+                        help="card: Qwen's model-card sampling (rag.SAMPLING); shared: the settings Gemma uses")
     parser.add_argument("--show-answers", action="store_true")
     args = parser.parse_args()
 
@@ -169,6 +171,9 @@ def main() -> None:
     print(f"Reviews go to {out}")
     rag.client = rag.OpenAI(base_url=rag.BASE_URL, api_key=rag.API_KEY)
     default_rules = rag.system_prompt
+    card_sampling = dict(rag.SAMPLING)
+    if args.sampling == "shared":
+        rag.SAMPLING.clear()   # every model falls back to TEMPERATURE, TOP_P and TOP_K
     rows = []
     try:
         for prompt_name in args.prompts:
@@ -186,6 +191,7 @@ def main() -> None:
                         f.write(json.dumps(row) + "\n")
     finally:
         rag.system_prompt = default_rules
+        rag.SAMPLING.update(card_sampling)
         rag.client.close()
         rag.unload_model(rag.CODE_MODEL)
 
