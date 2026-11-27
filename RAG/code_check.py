@@ -25,6 +25,8 @@ FLAGS = re.I | re.S
 # Answers quote values as the code spells them ("2000u", "20,000 Hz", "10 milliseconds").
 THOUSANDS = r"[,\s]?"
 MS = r"\s*u?\W{0,4}\s*(ms|milliseconds?)\b"
+# Between a macro name and its value: "`STALL_TIME_MS`: 500u", "STALL_TIME_MS (500u)", "STALL_TIME_MS is 500u".
+MACRO = r"\W{0,6}(?:is|=|of|equals)?\W{0,6}"
 # (id, question, anchors: (file, text on the line that holds the answer), facts: (name, pattern)).
 QUESTIONS = [
     ("C1", "Which GPIO drives the motor PWM output, and at what frequency does it switch?",
@@ -40,9 +42,9 @@ QUESTIONS = [
     ("C4", "When does the firmware decide that the motor has stalled?",
      [("motor.c", "static void motor_check_protection"), ("motor.c", "#define STALL_TIME_MS")],
      # Answers also give the value after the macro name: "`STALL_TIME_MS`: 500u".
-     [("1500 mA", rf"\b1{THOUSANDS}500\s*u?\s*(mA|milliamps?)|1\.5\s*A\b|STALL_CURRENT_MA\W{{1,12}}1{THOUSANDS}500u?\b"),
-      ("500 ms", rf"\b500{MS}|STALL_TIME_MS\W{{1,12}}500u?\b"),
-      ("below 30 rpm", r"\b30\s*rpm|STALL_MIN_SPEED_RPM\W{1,12}30\b")]),
+     [("1500 mA", rf"\b1{THOUSANDS}500\s*u?\s*(mA|milliamps?)|1\.5\s*A\b|STALL_CURRENT_MA{MACRO}1{THOUSANDS}500u?\b"),
+      ("500 ms", rf"\b500{MS}|STALL_TIME_MS{MACRO}500u?\b"),
+      ("below 30 rpm", rf"\b30\s*rpm|STALL_MIN_SPEED_RPM{MACRO}30\b")]),
     ("C5", "What is the watchdog timeout, and what has to happen before the watchdog is fed?",
      [("watchdog.c", "#define WDT_TIMEOUT_MS"), ("watchdog.c", "void watchdog_service")],
      [("2000 ms", rf"\b2{THOUSANDS}000{MS}|\b2\s*(s|seconds?)\b"),

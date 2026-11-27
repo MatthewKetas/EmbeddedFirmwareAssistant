@@ -82,6 +82,11 @@ class CodeCheckTests(unittest.TestCase):
                   "*   `STALL_TIME_MS`: 500u [motor_fw/motor.c:8]")
         facts = dict((qid, f) for qid, _, _, f in code_check.QUESTIONS)["C4"]
         self.assertEqual(len(code_check.score_answer(answer, [], facts, [])["facts"]), 3)
+        # The rerun with the fuller context wrote "is".
+        answer = ("*   `STALL_CURRENT_MA` is 1500u [motor_fw/motor.c:7].\n*   `STALL_MIN_SPEED_RPM` is 30 [motor_fw/motor.c:9].\n"
+                  "*   `STALL_TIME_MS` is 500u [motor_fw/motor.c:8].")
+        self.assertEqual(len(code_check.score_answer(answer, [], facts, [])["facts"]), 3)
+        self.assertEqual(code_check.score_answer("`STALL_TIME_MS` is 5000u", [], facts, [])["facts"], [])
 
     def test_a_review_that_invents_missing_clamps_fails(self):
         # From the /code review of motor.c, which never saw motor_control_step.
