@@ -31,10 +31,10 @@ MACRO = r"\W{0,6}(?:is|=|of|equals)?\W{0,6}"
 QUESTIONS = [
     ("C1", "Which GPIO drives the motor PWM output, and at what frequency does it switch?",
      [("board_pins.h", "#define PIN_MOTOR_PWM"), ("pwm.c", "#define PWM_FREQUENCY_HZ")],
-     [("GPIO 18", r"\b(GPIO|pin|IO)(\s*number)?\W{0,4}\s*_?18\b|PIN_MOTOR_PWM\W{1,20}18\b"), ("20 kHz", rf"20\s*kHz|\b20{THOUSANDS}000\s*u?\s*(Hz|hertz)?\b")]),
+     [("GPIO 18", rf"\b(GPIO|pin|IO)(\s*number)?\W{{0,4}}\s*_?18\b|PIN_MOTOR_PWM{MACRO}(defined as)?\W{{0,6}}18\b"), ("20 kHz", rf"20\s*kHz|\b20{THOUSANDS}000\s*u?\s*(Hz|hertz)?\b")]),
     ("C2", "What happens to incoming UART bytes when the receive buffer is full?",
      [("uart_rx.c", "void uart_rx_isr")],
-     [("new byte dropped", r"drop|discard|ignor|lost|not stored"), ("overrun counted", r"rx_overruns|overrun")]),
+     [("new byte dropped", r"drop|discard|ignor|lost|not stored"), ("overrun counted", r"rx_overruns|overrun|\bcount(ed|s)\b")]),
     ("C3", "How many times does the firmware retry a failed sensor read, and how long does each I2C transfer wait?",
      [("env_sensor.c", "#define SENSOR_RETRIES"), ("env_sensor.c", "int env_sensor_read")],
      [("3 retries", r"\b(3|three)\b[^.]{0,40}(retr|more times|attempts? after)|retr[^.]{0,40}\b(3|three)\b|\b(4|four)\s*(total\s*)?attempts"),
@@ -56,7 +56,7 @@ QUESTIONS = [
       ("checked once a second", rf"once (a|per) second|every (1 )?seconds?\b|\b1{THOUSANDS}000{MS}|\b(5|five)\s*seconds")]),
     ("C7", "What does the firmware do if the stored configuration fails its CRC check?",
      [("config.c", "void config_load")],
-     [("uses defaults", r"default"), ("writes them back", r"writ\w* (them |the defaults )?back|config_save_now|saved? (at once|immediately)")]),
+     [("uses defaults", r"default"), ("writes them back", r"writ\w* (them |the defaults )?back|config_save_now|sav(ed?|es|ing)\b[^.]{0,40}(at once|immediately|non-volatile|NVS|storage)|(at once|immediately)[^.]{0,20}sav")]),
     ("C8", "How often does the main loop run the motor control step?",
      [("main.c", "#define CONTROL_PERIOD_MS")],
      [("every 10 ms", rf"\b10{MS}|100\s*Hz")]),
@@ -161,16 +161,17 @@ def main() -> None:
                     reply, _ = rag.stream_reply([{"role": "user", "content": rag.build_rag_prompt(PRIOR[qid], earlier)}],
                                                 rag.CODE_MODEL, echo=False)
                 history = [{"role": "user", "content": PRIOR[qid]}, {"role": "assistant", "content": reply}]
-            query = rag.retrieval_query(question, history)
+            # Retrieval sees only the question itself, as in rag.py. Searching a follow-up together with the
+            # earlier question was tried and removed: motor_fault still ranked below 30 for C11.
             rag.TOP_N_CHUNKS = args.depth
             start = time.monotonic()
-            ranked = rag.retrieve(query, [source])
+            ranked = rag.retrieve(question, [source])
             seconds = time.monotonic() - start
             rag.TOP_N_CHUNKS = top_n
             # What rag.py sends: a named file comes in addition to the top N, so retrieve again
             # at the normal depth rather than cutting the deep ranking.
-            hits = rag.retrieve(query, [source])
-            print(f"  retrieval {seconds:.1f}s{'' if query == question else ', searched with the earlier question too'}")
+            hits = rag.retrieve(question, [source])
+            print(f"  retrieval {seconds:.1f}s")
             sent = {numbered: sent_with(question, hits, numbered, history) for numbered in (False, True)}
             print(f"  chunks sent: {len(sent[False])} without line numbers, {len(sent[True])} with")
             for name, rank in anchor_ranks(ranked, anchors).items():

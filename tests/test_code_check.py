@@ -72,8 +72,14 @@ class CodeCheckTests(unittest.TestCase):
             "C6": "below **BATTERY_SHUTDOWN_MV** (defined as **3300u** mV) [motor_fw/power.c:8-9].",
             "C8": "The main loop runs the motor control step every 10 milliseconds.",
             "C1b": "The GPIO is **PIN_MOTOR_PWM** (pin number **18**) [motor_fw/board_pins.h:6].",
+            # From the run after the reply cap: all three right, all three missed by the first patterns.
+            "C1c": "The GPIO pin that drives the motor PWM output is **PIN_MOTOR_PWM** (defined as **18**).",
+            "C2b": "When the receive buffer is full, the new byte is dropped and counted, so queued data is kept.",
+            "C7b": "it initializes the configuration to defaults, marks it as dirty, and immediately saves it to "
+                   "non-volatile storage [motor_fw/config.c:51-73].",
         }
-        names = {"C1": "20 kHz", "C5": "2000 ms", "C6": "3300 mV", "C8": "every 10 ms", "C1b": "GPIO 18"}
+        names = {"C1": "20 kHz", "C5": "2000 ms", "C6": "3300 mV", "C8": "every 10 ms", "C1b": "GPIO 18",
+                 "C1c": "GPIO 18", "C2b": "overrun counted", "C7b": "writes them back"}
         facts = {qid: f for qid, _, _, f in code_check.QUESTIONS}
         for qid, answer in cases.items():
             with self.subTest(qid=qid):
@@ -109,7 +115,7 @@ class CodeCheckTests(unittest.TestCase):
 
     def test_wrong_answers_miss_the_facts(self):
         facts = {qid: f for qid, _, _, f in code_check.QUESTIONS}
-        cases = [("C1", "The PWM runs on GPIO 19 at 25 kHz.", 0), ("C1", "Pin number 118 at 2 kHz.", 0), ("C4", "A stall is 2 A for one second.", 0),
+        cases = [("C1", "The PWM runs on GPIO 19 at 25 kHz.", 0), ("C1", "Pin number 118 at 2 kHz.", 0), ("C7", "It uses the defaults and saves nothing.", 1), ("C4", "A stall is 2 A for one second.", 0),
                  ("C8", "The control step runs every 100 ms.", 0), ("C6", "It shuts down at 3.0 V right away.", 0),
                  ("C5", "The timeout is 12000 ms, fed by a timer.", 0), ("C8", "It runs every 110 milliseconds.", 0)]
         for qid, answer, expected in cases:

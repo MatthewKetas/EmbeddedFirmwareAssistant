@@ -909,7 +909,7 @@ def interactive_loop():
         # with it, so the prompt does not grow with every turn of a long session.
         history = recent(history)
         board_context = board_map.context(board_id, user_input) if board_id else ""
-        hits = retrieve(retrieval_query(user_input, history), only, board_id)
+        hits = retrieve(user_input, only, board_id)
         if any("file" in h.payload for h in hits):
             hits = fit_code_context(user_input, hits, history, board_context)
             if not hits:
@@ -928,20 +928,6 @@ def interactive_loop():
         reply, _ = stream_reply(history + [{"role": "user", "content": content}], pick_model(hits))
         history.append({"role": "user", "content": user_input})
         history.append({"role": "assistant", "content": reply})
-
-
-# A question that refers back: retrieval alone saw "And what happens to the motor when that fault
-# trips?", missed motor_fault, and Qwen invented lines from its earlier answer. Only such questions
-# borrow the previous question's words, so a new topic is not pulled towards the old one.
-FOLLOW_UP = re.compile(r"^\s*(and|also|then|so|what about|how about)\b|\b(that|this|those|these|it|its|they|them)\b", re.I)
-
-
-def retrieval_query(question: str, history: list) -> str:
-    """The text to search with: the question, plus the previous question when this one refers back."""
-    earlier = [m["content"] for m in history if m["role"] == "user"]
-    if earlier and FOLLOW_UP.search(question):
-        return f"{earlier[-1]}\n{question}"
-    return question
 
 
 def recent(history: list) -> list:
