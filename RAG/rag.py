@@ -361,9 +361,18 @@ def code_chunks(repo: Path):
                 continue
             source = path.read_bytes()
             boundaries = [0]
-            for node in parser.parse(source).root_node.named_children:
+            nodes = parser.parse(source).root_node.named_children
+            for i, node in enumerate(nodes):
                 if node.type in {"function_definition", "preproc_if", "preproc_ifdef"}:
-                    boundaries.extend((node.start_byte, node.end_byte))
+                    # Keep the comment directly above (no blank line) with the code it explains:
+                    # split off, the comment ranked 1-4 while its function ranked 30th or lower.
+                    start, j = node.start_byte, i - 1
+                    while j >= 0 and nodes[j].type == "comment":
+                        gap = source[nodes[j].end_byte:start]
+                        if gap.strip() or gap.count(b"\n") > 1:
+                            break
+                        start, j = nodes[j].start_byte, j - 1
+                    boundaries.extend((start, node.end_byte))
             boundaries.append(len(source))
 
             line = 1

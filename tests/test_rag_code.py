@@ -26,6 +26,38 @@ class StubTokenizer:
     "requires Tree-sitter and its C grammar",
 )
 class CodeTests(unittest.TestCase):
+    def test_a_comment_directly_above_a_function_stays_with_it(self):
+        source = (
+            "/* File header. */\n"
+            "\n"
+            "static int ticks;\n"
+            "\n"
+            "/* Drops the byte when the buffer is full. */\n"
+            "// Called from the RX interrupt.\n"
+            "void rx_isr(int byte)\n"
+            "{\n"
+            "    ticks++;\n"
+            "}\n"
+            "\n"
+            "/* Separated by a blank line, so it is not this function's. */\n"
+            "\n"
+            "int rx_count(void)\n"
+            "{\n"
+            "    return ticks;\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            Path(temp, "rx.c").write_text(source)
+            with patch.object(rag, "get_tokenizer", return_value=StubTokenizer()):
+                chunks = list(rag.code_chunks(Path(temp)))
+        isr = next(c for c in chunks if "void rx_isr" in c["text"])
+        self.assertTrue(isr["text"].startswith("/* Drops the byte when the buffer is full. */\n// Called from"))
+        self.assertEqual((isr["start_line"], isr["end_line"]), (5, 10))
+        count = next(c for c in chunks if "int rx_count" in c["text"])
+        self.assertTrue(count["text"].startswith("int rx_count"))
+        self.assertEqual(count["start_line"], 14)
+        self.assertTrue(any(c["text"].startswith("/* File header. */") for c in chunks))
+
     def test_code_command_scopes_retrieval_and_refreshes_index(self):
         with tempfile.TemporaryDirectory() as temp, contextlib.redirect_stdout(io.StringIO()):
             repo = Path(temp, "motor fw")
