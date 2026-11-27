@@ -132,7 +132,9 @@ def main() -> None:
             ranked = rag.retrieve(question, [source])
             seconds = time.monotonic() - start
             rag.TOP_N_CHUNKS = top_n
-            hits = ranked[:top_n]
+            # What rag.py sends: a named file comes in addition to the top N, so retrieve again
+            # at the normal depth rather than cutting the deep ranking.
+            hits = rag.retrieve(question, [source])
             sent = {numbered: sent_with(question, hits, numbered) for numbered in (False, True)}
             print(f"=== {qid}: {question} ({seconds:.1f}s)")
             print(f"  chunks sent: {len(sent[False])} without line numbers, {len(sent[True])} with")
