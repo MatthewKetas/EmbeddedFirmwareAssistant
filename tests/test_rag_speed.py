@@ -90,6 +90,22 @@ class SpeedTests(unittest.TestCase):
         with patch.dict(rag.MODEL_OPTIONS[rag.CODE_MODEL], thinking=True):
             self.reply(rag.CODE_MODEL, [chunk(content="a")])
         self.assertNotIn("enable_thinking", self.client.chat.completions.create.call_args.kwargs["extra_body"])
+        # Reasoning counts towards max_tokens, so a thinking model is not capped.
+        self.assertNotIn("max_tokens", self.client.chat.completions.create.call_args.kwargs)
+
+    def test_replies_are_capped_and_a_cut_is_reported(self):
+        out = io.StringIO()
+        last = SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="b", reasoning_content=None),
+                                                        finish_reason="length")], usage=None)
+        self.client.chat.completions.create.return_value = FakeStream(self.clock, [chunk(content="a"), last], 0.01)
+        with contextlib.redirect_stdout(out):
+            reply, stats = rag.stream_reply([{"role": "user", "content": "q"}], rag.CODE_MODEL, echo=False)
+        self.assertEqual(self.client.chat.completions.create.call_args.kwargs["max_tokens"], rag.RAG_REPLY_TOKENS)
+        self.assertEqual(reply, "ab")
+        self.assertTrue(stats["cut"])
+        self.assertIn(f"stopped at the {rag.RAG_REPLY_TOKENS}-token limit", out.getvalue())
+        _, stats = self.reply(rag.CODE_MODEL, [chunk(content="a")])
+        self.assertFalse(stats["cut"])
 
     def test_reply_text_can_be_kept_off_the_terminal(self):
         out = io.StringIO()
@@ -112,6 +128,8 @@ class SpeedTests(unittest.TestCase):
         self.assertEqual(sent[0], {"role": "system", "content": rag.REVIEW_CHECKLIST})
         self.assertNotIn("what it lacks", sent[0]["content"])
         self.assertIn("full or empty", sent[0]["content"])
+        # Qwen wrote its tracing out (up to 12,020 tokens) when told only to report traced bugs.
+        self.assertIn("write only the findings, not the tracing", sent[0]["content"])
 
     def test_rules_ask_for_the_key_values_and_set_no_length_cap(self):
         # A "briefly ... under 350 words" version cost 9 points of key facts in the rules bench.
@@ -171,6 +189,32 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(len(last), 2 * rag.HISTORY_TURNS + 1)   # earlier exchanges plus this question
         self.assertEqual(last[0]["content"], "question 2")
         self.assertIn("Answer only the question at the end of this message", last[-1]["content"])
+
+
+class FollowUpTests(unittest.TestCase):
+    HISTORY = [{"role": "user", "content": "When does the motor stall?"}, {"role": "assistant", "content": "..."}]
+
+    def test_a_question_that_refers_back_also_searches_with_the_previous_one(self):
+        for question in ("And what happens when that fault trips?", "What about the watchdog?", "Why does it reset?"):
+            with self.subTest(question=question):
+                self.assertEqual(rag.retrieval_query(question, self.HISTORY), f"When does the motor stall?\n{question}")
+
+    def test_a_new_question_or_a_first_question_searches_alone(self):
+        self.assertEqual(rag.retrieval_query("Which GPIO drives the PWM?", self.HISTORY), "Which GPIO drives the PWM?")
+        self.assertEqual(rag.retrieval_query("And the timeout?", []), "And the timeout?")
+
+    def test_the_chat_loop_retrieves_with_the_follow_up_query(self):
+        doc = SimpleNamespace(payload={"source": "ESP32.pdf", "page": 3, "text": "3.3 V"})
+        commands = iter(["When does the motor stall?", "And what trips that fault?", "/quit"])
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            patch.object(rag, "make_prompt", return_value=lambda _: next(commands)),
+            patch.object(rag, "retrieve", return_value=[doc]) as retrieve,
+            patch.object(rag, "stream_reply", return_value=("answer", {})),
+        ):
+            rag.interactive_loop()
+        self.assertEqual([c.args[0] for c in retrieve.call_args_list],
+                         ["When does the motor stall?", "When does the motor stall?\nAnd what trips that fault?"])
 
 
 class RoutingTests(unittest.TestCase):

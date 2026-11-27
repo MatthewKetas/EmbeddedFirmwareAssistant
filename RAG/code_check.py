@@ -150,23 +150,27 @@ def main() -> None:
         source = rag.ingest_code(str(REPO))
         print(f"Context budget: {rag.RAG_CONTEXT_TOKENS} tokens of retrieved code; top {top_n} chunks retrieved\n")
         for qid, question, anchors, facts in QUESTIONS:
+            print(f"=== {qid}: {question}")
+            history = []
+            if qid in PRIOR:
+                print(f"  asked first: {PRIOR[qid]}")
+                reply = "(not asked without --answer)"
+                if args.answer:
+                    # As rag.py keeps it: the plain earlier question, and the answer it got.
+                    earlier = rag.fit_code_context(PRIOR[qid], rag.retrieve(PRIOR[qid], [source]), [])
+                    reply, _ = rag.stream_reply([{"role": "user", "content": rag.build_rag_prompt(PRIOR[qid], earlier)}],
+                                                rag.CODE_MODEL, echo=False)
+                history = [{"role": "user", "content": PRIOR[qid]}, {"role": "assistant", "content": reply}]
+            query = rag.retrieval_query(question, history)
             rag.TOP_N_CHUNKS = args.depth
             start = time.monotonic()
-            ranked = rag.retrieve(question, [source])
+            ranked = rag.retrieve(query, [source])
             seconds = time.monotonic() - start
             rag.TOP_N_CHUNKS = top_n
             # What rag.py sends: a named file comes in addition to the top N, so retrieve again
             # at the normal depth rather than cutting the deep ranking.
-            hits = rag.retrieve(question, [source])
-            print(f"=== {qid}: {question} ({seconds:.1f}s)")
-            history = []
-            if args.answer and qid in PRIOR:
-                # As rag.py keeps it: the plain earlier question, and the answer it got.
-                earlier = rag.fit_code_context(PRIOR[qid], rag.retrieve(PRIOR[qid], [source]), [])
-                reply, _ = rag.stream_reply([{"role": "user", "content": rag.build_rag_prompt(PRIOR[qid], earlier)}],
-                                            rag.CODE_MODEL, echo=False)
-                history = [{"role": "user", "content": PRIOR[qid]}, {"role": "assistant", "content": reply}]
-                print(f"  asked first: {PRIOR[qid]}")
+            hits = rag.retrieve(query, [source])
+            print(f"  retrieval {seconds:.1f}s{'' if query == question else ', searched with the earlier question too'}")
             sent = {numbered: sent_with(question, hits, numbered, history) for numbered in (False, True)}
             print(f"  chunks sent: {len(sent[False])} without line numbers, {len(sent[True])} with")
             for name, rank in anchor_ranks(ranked, anchors).items():
@@ -184,7 +188,8 @@ def main() -> None:
                     result = score_answer(reply, anchors, facts, ranges)
                     rows.append({"label": args.label, "question": qid, "run": run, **result, **stats, "answer": reply})
                     missing = [n for n, _ in facts if n not in result["facts"]]
-                    print(f"  answer {run}: facts {len(result['facts'])}/{result['of']}"
+                    print(f"  answer {run}{' (stopped at the length limit)' if stats.get('cut') else ''}: "
+                          f"facts {len(result['facts'])}/{result['of']}"
                           f"{' (missing: ' + ', '.join(missing) + ')' if missing else ''}, "
                           f"{'cites an answer line' if result['located'] else 'no answer line cited'}, "
                           f"{stats['completion_tokens']} tokens, {stats['total_s']:.1f}s")

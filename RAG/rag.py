@@ -632,8 +632,10 @@ REVIEW_CHECKLIST = (
     "- return values that are ignored;\n"
     "- data shared with interrupts or other threads (volatile, atomic access);\n"
     "- counters and timers that wrap around.\n"
-    "Report every real bug you find, most severe first, with file, line and fix. "
-    "Only report a bug you have traced through the code."
+    # "Only report a bug you have traced" made Qwen write the tracing out: 5,351 and 12,020 tokens.
+    "Trace each suspected bug through the code before reporting it, but write only the findings, "
+    "not the tracing: every real bug, most severe first, with file, line and fix. "
+    "If there are no real bugs, say so in one line."
 )
 
 
@@ -665,6 +667,9 @@ def stream_reply(messages: list, model: str, echo: bool = True) -> tuple[str, di
         temperature=TEMPERATURE,
         top_p=TOP_P,
         extra_body=extra,
+        # A review once walked motor.c line by line until the 16,384-token context ran out (249 s).
+        # With thinking on, the reasoning counts too, so it is left uncapped.
+        **({} if options["thinking"] else {"max_tokens": RAG_REPLY_TOKENS}),
         stream=True,
         stream_options={"include_usage": True},
     )
@@ -672,10 +677,11 @@ def stream_reply(messages: list, model: str, echo: bool = True) -> tuple[str, di
         print("Response: ", end="", flush=True)
     reply, usage, timings = "", None, None
     first = answer = last = None
-    thinking = 0
+    thinking, cut = 0, False
     with stream:
         for chunk in stream:
             if chunk.choices:
+                cut = cut or getattr(chunk.choices[0], "finish_reason", None) == "length"
                 delta = chunk.choices[0].delta
                 # Thinking arrives as reasoning_content; it is counted, not shown or kept.
                 if getattr(delta, "reasoning_content", None):
@@ -710,7 +716,10 @@ def stream_reply(messages: list, model: str, echo: bool = True) -> tuple[str, di
         "prefill_tps": (timings or {}).get("prompt_per_second"),
         "decode_tps": decode_tps,
         "total_s": end - start,
+        "cut": cut,
     }
+    if cut:
+        print(f"[reply stopped at the {RAG_REPLY_TOKENS}-token limit]")
     print_stats(stats)
     if echo:
         print()
@@ -900,7 +909,7 @@ def interactive_loop():
         # with it, so the prompt does not grow with every turn of a long session.
         history = recent(history)
         board_context = board_map.context(board_id, user_input) if board_id else ""
-        hits = retrieve(user_input, only, board_id)
+        hits = retrieve(retrieval_query(user_input, history), only, board_id)
         if any("file" in h.payload for h in hits):
             hits = fit_code_context(user_input, hits, history, board_context)
             if not hits:
@@ -919,6 +928,20 @@ def interactive_loop():
         reply, _ = stream_reply(history + [{"role": "user", "content": content}], pick_model(hits))
         history.append({"role": "user", "content": user_input})
         history.append({"role": "assistant", "content": reply})
+
+
+# A question that refers back: retrieval alone saw "And what happens to the motor when that fault
+# trips?", missed motor_fault, and Qwen invented lines from its earlier answer. Only such questions
+# borrow the previous question's words, so a new topic is not pulled towards the old one.
+FOLLOW_UP = re.compile(r"^\s*(and|also|then|so|what about|how about)\b|\b(that|this|those|these|it|its|they|them)\b", re.I)
+
+
+def retrieval_query(question: str, history: list) -> str:
+    """The text to search with: the question, plus the previous question when this one refers back."""
+    earlier = [m["content"] for m in history if m["role"] == "user"]
+    if earlier and FOLLOW_UP.search(question):
+        return f"{earlier[-1]}\n{question}"
+    return question
 
 
 def recent(history: list) -> list:
