@@ -54,6 +54,7 @@ class CodeCheckTests(unittest.TestCase):
             "C6": "Below 3300 mV for 5 consecutive readings; power_check_battery runs once a second.",
             "C7": "It falls back to the defaults and writes them back at once with config_save_now().",
             "C8": "Every 10 ms (CONTROL_PERIOD_MS).",
+            "C9": "No serious bugs: the integral is clamped both ways (lines 106-109) and the output to 0-1000.",
         }
         for qid, _, anchors, facts in code_check.QUESTIONS:
             with self.subTest(qid=qid):
@@ -74,6 +75,21 @@ class CodeCheckTests(unittest.TestCase):
         for qid, answer in cases.items():
             with self.subTest(qid=qid):
                 self.assertIn(names[qid], code_check.score_answer(answer, [], facts[qid[:2]], [])["facts"])
+
+    def test_c4_values_given_after_the_macro_names(self):
+        # Both run-1 and run-2 answers of the 3-run check wrote the values this way and were right.
+        answer = ("*   `STALL_CURRENT_MA`: 1500u [motor_fw/motor.c:7]\n*   `STALL_MIN_SPEED_RPM`: 30 [motor_fw/motor.c:9]\n"
+                  "*   `STALL_TIME_MS`: 500u [motor_fw/motor.c:8]")
+        facts = dict((qid, f) for qid, _, _, f in code_check.QUESTIONS)["C4"]
+        self.assertEqual(len(code_check.score_answer(answer, [], facts, [])["facts"]), 3)
+
+    def test_a_review_that_invents_missing_clamps_fails(self):
+        # From the /code review of motor.c, which never saw motor_control_step.
+        facts = dict((qid, f) for qid, _, _, f in code_check.QUESTIONS)["C9"]
+        for answer in ("The limit check on line 115 only handles positive overflow/windup.",
+                       "The PI controller does not limit the output to 0-1000 per mille."):
+            with self.subTest(answer=answer):
+                self.assertEqual(code_check.score_answer(answer, [], facts, [])["facts"], [])
 
     def test_wrong_answers_miss_the_facts(self):
         facts = {qid: f for qid, _, _, f in code_check.QUESTIONS}

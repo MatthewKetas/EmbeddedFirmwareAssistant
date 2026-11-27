@@ -39,7 +39,10 @@ QUESTIONS = [
       ("50 ms timeout", rf"\b50{MS}")]),
     ("C4", "When does the firmware decide that the motor has stalled?",
      [("motor.c", "static void motor_check_protection"), ("motor.c", "#define STALL_TIME_MS")],
-     [("1500 mA", rf"\b1{THOUSANDS}500\s*u?\s*(mA|milliamps?)|1\.5\s*A\b"), ("500 ms", rf"\b500{MS}"), ("below 30 rpm", r"\b30\s*rpm")]),
+     # Answers also give the value after the macro name: "`STALL_TIME_MS`: 500u".
+     [("1500 mA", rf"\b1{THOUSANDS}500\s*u?\s*(mA|milliamps?)|1\.5\s*A\b|STALL_CURRENT_MA\W{{1,12}}1{THOUSANDS}500u?\b"),
+      ("500 ms", rf"\b500{MS}|STALL_TIME_MS\W{{1,12}}500u?\b"),
+      ("below 30 rpm", r"\b30\s*rpm|STALL_MIN_SPEED_RPM\W{1,12}30\b")]),
     ("C5", "What is the watchdog timeout, and what has to happen before the watchdog is fed?",
      [("watchdog.c", "#define WDT_TIMEOUT_MS"), ("watchdog.c", "void watchdog_service")],
      [("2000 ms", rf"\b2{THOUSANDS}000{MS}|\b2\s*(s|seconds?)\b"),
@@ -55,6 +58,12 @@ QUESTIONS = [
     ("C8", "How often does the main loop run the motor control step?",
      [("main.c", "#define CONTROL_PERIOD_MS")],
      [("every 10 ms", rf"\b10{MS}|100\s*Hz")]),
+    # A file named in the question. motor.c has no planted bugs; similarity retrieval missed these two
+    # functions and Qwen reported clamps missing from code it was never sent.
+    ("C9", "Review motor.c for bugs.",
+     [("motor.c", "void motor_control_step"), ("motor.c", "static void motor_fault")],
+     [("does not claim the clamps are missing",
+       r"^(?![\s\S]*(only handles positive|does not (limit|clamp)|not (limited|clamped) to|unclamped|negative windup))")]),
 ]
 
 

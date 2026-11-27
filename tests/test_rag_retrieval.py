@@ -90,6 +90,32 @@ class RetrievalTests(unittest.TestCase):
         ranked = [p.id for p in rag.keyword_rank("a shared 400 Kbit/s I2C bus for the sensors", points)]
         self.assertEqual(ranked, [1, 2, 0])   # "Clocks and Timers" shares no word with the question
 
+    def test_a_named_code_file_comes_whole_and_first(self):
+        def point(i, file, start, text):
+            return SimpleNamespace(id=i, payload={"file": file, "start_line": start, "end_line": start + 1,
+                                                  "text": text, "source": "repo"})
+        points = [point(1, "src/motor.c", 40, "control step"), point(2, "pwm.c", 1, "pwm"),
+                  point(3, "src/motor.c", 1, "defines"), point(4, "notmotor.c", 1, "other"),
+                  point(5, "motor.h", 1, "header")]
+        self.assertEqual([p.id for p in rag.named_file_chunks("Review motor.c for bugs.", points)], [3, 1])
+        self.assertEqual([p.id for p in rag.named_file_chunks("Compare ./src/motor.c and MOTOR.H", points)],
+                         [5, 3, 1])
+        self.assertEqual(rag.named_file_chunks("What does ESP32.pdf say about timers?", points), [])
+
+    def test_retrieve_puts_the_named_file_before_similar_chunks(self):
+        self.chunks = ["pwm setup", "pwm ramp", "uart buffer", "watchdog"]
+        rag.ingest("ESP32.pdf")
+        # Give the stored document chunks file names, as /code does for code.
+        pts, _ = rag.qdrant.scroll(rag.COLLECTION, limit=100, with_payload=True)
+        files = {"pwm setup": "pwm.c", "pwm ramp": "pwm.c", "uart buffer": "uart_rx.c", "watchdog": "watchdog.c"}
+        for p in pts:
+            rag.qdrant.set_payload(rag.COLLECTION, {"file": files[p.payload["text"]], "start_line": p.payload["chunk"]},
+                                   points=[p.id])
+        with patch.object(rag, "TOP_N_CHUNKS", 2):
+            hits = [h.payload["text"] for h in rag.retrieve("Review uart_rx.c")]
+        self.assertEqual(hits[0], "uart buffer")
+        self.assertEqual(len(hits), 3)   # the named file, then the usual top 2
+
     def test_rag_prompt_forbids_values_from_general_knowledge(self):
         # Qwen once gave U0TXD as GPIO3 "in typical ESP32 pinouts" when the pin table was not retrieved.
         hit = SimpleNamespace(payload={"source": "ESP32.pdf", "page": 23, "text": "GPIO0 = 0"})

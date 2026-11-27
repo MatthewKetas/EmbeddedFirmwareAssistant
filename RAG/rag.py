@@ -461,6 +461,20 @@ def keyword_rank(question: str, points, k1: float = 1.5, b: float = 0.75) -> lis
     return [point for _, point in sorted(scored, key=lambda pair: pair[0], reverse=True)]
 
 
+CODE_FILE = re.compile(r"[\w./-]+\.(?:c|h)\b", re.I)
+
+
+def named_file_chunks(question: str, points) -> list:
+    """Chunks of the code files the question names ("review motor.c"), in file and line order. Ranked
+    by similarity, "Review motor.c for bugs" retrieved other files and missed motor_control_step."""
+    names = {name.lower().lstrip("./") for name in CODE_FILE.findall(question)}
+    if not names:
+        return []
+    named = [p for p in points if (f := p.payload.get("file", "").lower())
+             and any(f == n or f.endswith("/" + n) for n in names)]
+    return sorted(named, key=lambda p: (p.payload["file"], p.payload["start_line"]))
+
+
 def retrieve(question: str, only: list[str] | None = None, board_id: str | None = None):
     if not qdrant.collection_exists(COLLECTION) or qdrant.count(COLLECTION).count == 0:
         return []
@@ -480,10 +494,13 @@ def retrieve(question: str, only: list[str] | None = None, board_id: str | None 
     # Fetch extra so identical chunks (a file indexed twice, repeated boilerplate) do not use up slots.
     depth = TOP_N_CHUNKS * 3
     candidates = qdrant.query_points(COLLECTION, query=qvec, limit=depth, query_filter=flt).points
-    if HYBRID_SEARCH:
-        # Reciprocal rank fusion: a chunk near the top of both rankings wins.
+    everything = None
+    if HYBRID_SEARCH or CODE_FILE.search(question):
         everything, _ = qdrant.scroll(COLLECTION, scroll_filter=flt, limit=100_000,
                                       with_payload=True, with_vectors=False)
+    named = named_file_chunks(question, everything) if everything else []
+    if HYBRID_SEARCH:
+        # Reciprocal rank fusion: a chunk near the top of both rankings wins.
         fused, by_id = Counter(), {}
         for ranking in (candidates, keyword_rank(question, everything)[:depth]):
             for rank, point in enumerate(ranking, 1):
@@ -496,7 +513,11 @@ def retrieve(question: str, only: list[str] | None = None, board_id: str | None 
         if text not in seen:
             seen.add(text)
             hits.append(point)
-    return hits[:TOP_N_CHUNKS]
+    if not named:
+        return hits[:TOP_N_CHUNKS]
+    # The named file comes whole and first; fit_code_context trims the end to the token budget.
+    named_ids = {p.id for p in named}
+    return named + [h for h in hits if h.id not in named_ids][:TOP_N_CHUNKS]
 
 
 def list_sources() -> list[str]:
