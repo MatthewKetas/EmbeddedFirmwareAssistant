@@ -213,9 +213,22 @@ Asked in `rag.py` to "Review motor.c for bugs", similarity retrieval sent chunks
 
 Asked to review `motor.c` straight after a question on the stall check, Qwen ended its review by answering the stall question again. `rag.py` sends the conversation with each question, so I now send only the last three exchanges, and the retrieval prompt says to answer only the question at its end, with earlier messages as background for follow-ups. [code_check.py](code_check.py) checks it with C10, the same review asked after the same question, and C11, a follow-up ("And what happens to the motor when that fault trips?") that only makes sense with the earlier question.
 
-Two problems showed up in those runs. First, reviews of a whole file ran away: one review of `motor.c` reasoned aloud for 5,351 tokens, and another walked the file line by line until it filled Qwen's 16,384-token context (12,020 tokens, 249 s). Replies are now capped at the 2,048 tokens `RAG_REPLY_TOKENS` already reserved, with a note when one is cut; a runaway now stops after about 60 s. I also changed the checklist from "only report a bug you have traced" to "trace each suspected bug, but write only the findings, not the tracing". That did not stop the reviews: in the next run both still reached the cap, one of them repeating the same four lines. It did not cost the other answers any facts (all 17 of C1-C8 when read by hand), though they became shorter. Because the review cut off while looping, C10 passed the "does not answer the earlier question" check in one of two runs, and I could not tell from the other.
+Two problems showed up in those runs. First, reviews of a whole file ran away: one review of `motor.c` reasoned aloud for 5,351 tokens, and another walked the file line by line until it filled Qwen's 16,384-token context (12,020 tokens, 249 s). Replies are now capped at the 2,048 tokens `RAG_REPLY_TOKENS` already reserved, with a note when one is cut; a runaway now stops after about 60 s. I also changed the checklist from "only report a bug you have traced" to "trace each suspected bug, but write only the findings, not the tracing; if there are no real bugs, say so in one line". That did not stop the reviews: in the next run both still reached the cap, one of them repeating the same four lines. On the planted-bug reviews it was worse: Qwen answered "No real bugs" in 5-7 tokens for `uart_ring.c` in all three runs, so I restored the original wording (table below). Because the review cut off while looping, C10 passed the "does not answer the earlier question" check in one of two runs, and I could not tell from the other.
 
 Second, the follow-up's own words do not find `motor_fault`, which has no comment and shares few words with a question about faults, so it ranked below 30 and Qwen answered from the earlier reply, citing lines that do not exist (`motor.c:131` in a 129-line file). I tried searching follow-ups together with the previous question; `motor_fault` still ranked below 30, so I removed it rather than change retrieval for every question containing "it" or "that". Three more of the misses my patterns reported were correct answers ("defined as 18", "dropped and counted", "saves it to non-volatile storage"), now kept as tests.
+
+### Qwen's sampling settings
+
+Qwen had been using Gemma's sampling settings (temperature 1.0, top_p 0.9, top_k 40). Its model card recommends temperature 0.7, top_p 0.8, top_k 20, min_p 0 and presence_penalty 1.5 with thinking off, the penalty "to reduce endless repetitions". Because I had changed the checklist wording at the same time, I ran the planted-bug reviews ([review_bench.py](review_bench.py), three runs of six files) for each combination; `--sampling shared` runs Qwen with the old settings:
+
+| Checklist wording | Sampling | Planted bugs found | On the right line | Median answer tokens (checked / held-out files) | Median time, checked files |
+|---|---|---|---|---|---|
+| Original | Shared | 35/36 | 29/35 | 1,316 / 686 | 24.3 s |
+| Original | Qwen's card | 34/36 | 30/34 | 832 / 499 | 16.6 s |
+| Reworded | Shared | 26/36 | 21/26 | 232 / 235 | 7.9 s |
+| Reworded | Qwen's card | 31/36 | 29/31 | 584 / 178 | 11.4 s |
+
+The rewording cost the bugs; the card settings did not, and made reviews about 30% shorter. Qwen now uses the card settings with the original wording, and Gemma keeps its own. The card settings did not stop the whole-file review of `motor.c` from running to the 2,048-token cap, so that is bounded only by the cap.
 
 ## My evidence
 
