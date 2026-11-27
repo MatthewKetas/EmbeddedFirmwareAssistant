@@ -22,36 +22,39 @@ REPO = rag.SCRIPT_DIR / "code_cases" / "motor_fw"
 RESULTS = rag.SCRIPT_DIR / "bench_results"
 COLLECTION = "code_check"
 FLAGS = re.I | re.S
+# Answers quote values as the code spells them ("2000u", "20,000 Hz", "10 milliseconds").
+THOUSANDS = r"[,\s]?"
+MS = r"\s*u?\W{0,4}\s*(ms|milliseconds?)\b"
 # (id, question, anchors: (file, text on the line that holds the answer), facts: (name, pattern)).
 QUESTIONS = [
     ("C1", "Which GPIO drives the motor PWM output, and at what frequency does it switch?",
      [("board_pins.h", "#define PIN_MOTOR_PWM"), ("pwm.c", "#define PWM_FREQUENCY_HZ")],
-     [("GPIO 18", r"\b(GPIO|pin|IO)\s*_?18\b|PIN_MOTOR_PWM\W{1,20}18\b"), ("20 kHz", r"20\s*kHz|\b20\s?000\s*(u|Hz)?\b")]),
+     [("GPIO 18", r"\b(GPIO|pin|IO)\s*_?18\b|PIN_MOTOR_PWM\W{1,20}18\b"), ("20 kHz", rf"20\s*kHz|\b20{THOUSANDS}000\s*u?\s*(Hz|hertz)?\b")]),
     ("C2", "What happens to incoming UART bytes when the receive buffer is full?",
      [("uart_rx.c", "void uart_rx_isr")],
      [("new byte dropped", r"drop|discard|ignor|lost|not stored"), ("overrun counted", r"rx_overruns|overrun")]),
     ("C3", "How many times does the firmware retry a failed sensor read, and how long does each I2C transfer wait?",
      [("env_sensor.c", "#define SENSOR_RETRIES"), ("env_sensor.c", "int env_sensor_read")],
      [("3 retries", r"\b(3|three)\b[^.]{0,40}(retr|more times|attempts? after)|retr[^.]{0,40}\b(3|three)\b|\b(4|four)\s*(total\s*)?attempts"),
-      ("50 ms timeout", r"50\s*ms")]),
+      ("50 ms timeout", rf"\b50{MS}")]),
     ("C4", "When does the firmware decide that the motor has stalled?",
      [("motor.c", "static void motor_check_protection"), ("motor.c", "#define STALL_TIME_MS")],
-     [("1500 mA", r"1\s?500\s*mA|1\.5\s*A\b"), ("500 ms", r"\b500\s*ms"), ("below 30 rpm", r"\b30\s*rpm")]),
+     [("1500 mA", rf"\b1{THOUSANDS}500\s*u?\s*(mA|milliamps?)|1\.5\s*A\b"), ("500 ms", rf"\b500{MS}"), ("below 30 rpm", r"\b30\s*rpm")]),
     ("C5", "What is the watchdog timeout, and what has to happen before the watchdog is fed?",
      [("watchdog.c", "#define WDT_TIMEOUT_MS"), ("watchdog.c", "void watchdog_service")],
-     [("2000 ms", r"2\s?000\s*ms|\b2\s*(s|seconds?)\b"),
+     [("2000 ms", rf"\b2{THOUSANDS}000{MS}|\b2\s*(s|seconds?)\b"),
       ("every task checked in", r"(every|all|each)\s+(of the\s+)?(registered\s+)?tasks?[^.]{0,60}check|checked[_ ]in_mask")]),
     ("C6", "At what battery voltage does the board shut itself down, and how quickly?",
      [("power.c", "#define BATTERY_SHUTDOWN_MV"), ("power.c", "void power_check_battery")],
-     [("3300 mV", r"3\s?300\s*mV|3\.3\s*V\b"),
+     [("3300 mV", rf"\b3{THOUSANDS}300\s*u?\W{{0,4}}\s*(mV|millivolts?)|3\.3\s*V\b"),
       ("5 readings in a row", r"\b(5|five)\b[^.]{0,40}(consecutive|in a row|readings|calls)|SHUTDOWN_READINGS"),
-      ("checked once a second", r"once (a|per) second|every (1 )?seconds?\b|1\s?000\s*ms|\b(5|five)\s*seconds")]),
+      ("checked once a second", rf"once (a|per) second|every (1 )?seconds?\b|\b1{THOUSANDS}000{MS}|\b(5|five)\s*seconds")]),
     ("C7", "What does the firmware do if the stored configuration fails its CRC check?",
      [("config.c", "void config_load")],
      [("uses defaults", r"default"), ("writes them back", r"writ\w* (them |the defaults )?back|config_save_now|saved? (at once|immediately)")]),
     ("C8", "How often does the main loop run the motor control step?",
      [("main.c", "#define CONTROL_PERIOD_MS")],
-     [("every 10 ms", r"\b10\s*ms|100\s*Hz")]),
+     [("every 10 ms", rf"\b10{MS}|100\s*Hz")]),
 ]
 
 

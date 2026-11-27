@@ -60,10 +60,25 @@ class CodeCheckTests(unittest.TestCase):
                 result = code_check.score_answer(answers[qid], anchors, facts, [])
                 self.assertEqual(len(result["facts"]), result["of"])
 
+    def test_values_written_as_the_code_spells_them(self):
+        # Qwen's answers from the first --answer run; the first patterns missed all four.
+        cases = {
+            "C1": "It switches at a frequency of 20,000 Hz [motor_fw/pwm.c:6].",
+            "C5": "The watchdog timeout is **2000u** milliseconds (defined as **WDT_TIMEOUT_MS**).",
+            "C6": "below **BATTERY_SHUTDOWN_MV** (defined as **3300u** mV) [motor_fw/power.c:8-9].",
+            "C8": "The main loop runs the motor control step every 10 milliseconds.",
+        }
+        names = {"C1": "20 kHz", "C5": "2000 ms", "C6": "3300 mV", "C8": "every 10 ms"}
+        facts = {qid: f for qid, _, _, f in code_check.QUESTIONS}
+        for qid, answer in cases.items():
+            with self.subTest(qid=qid):
+                self.assertIn(names[qid], code_check.score_answer(answer, [], facts[qid], [])["facts"])
+
     def test_wrong_answers_miss_the_facts(self):
         facts = {qid: f for qid, _, _, f in code_check.QUESTIONS}
         cases = [("C1", "The PWM runs on GPIO 19 at 25 kHz.", 0), ("C4", "A stall is 2 A for one second.", 0),
-                 ("C8", "The control step runs every 100 ms.", 0), ("C6", "It shuts down at 3.0 V right away.", 0)]
+                 ("C8", "The control step runs every 100 ms.", 0), ("C6", "It shuts down at 3.0 V right away.", 0),
+                 ("C5", "The timeout is 12000 ms, fed by a timer.", 0), ("C8", "It runs every 110 milliseconds.", 0)]
         for qid, answer, expected in cases:
             with self.subTest(answer=answer):
                 self.assertEqual(len(code_check.score_answer(answer, [], facts[qid], [])["facts"]), expected)
