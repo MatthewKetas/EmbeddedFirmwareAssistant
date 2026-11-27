@@ -93,6 +93,21 @@ class SpeedTests(unittest.TestCase):
         # Reasoning counts towards max_tokens, so a thinking model is not capped.
         self.assertNotIn("max_tokens", self.client.chat.completions.create.call_args.kwargs)
 
+    def test_qwen_uses_its_model_cards_sampling_and_gemma_keeps_its_own(self):
+        self.reply(rag.CODE_MODEL, [chunk(content="a")])
+        sent = self.client.chat.completions.create.call_args.kwargs
+        self.assertEqual((sent["temperature"], sent["top_p"], sent["presence_penalty"]), (0.7, 0.8, 1.5))
+        self.assertEqual((sent["extra_body"]["top_k"], sent["extra_body"]["min_p"]), (20, 0.0))
+        with patch.dict(rag.MODEL_OPTIONS[rag.CODE_MODEL], thinking=True):
+            self.reply(rag.CODE_MODEL, [chunk(content="a")])
+        sent = self.client.chat.completions.create.call_args.kwargs
+        self.assertEqual((sent["temperature"], sent["top_p"]), (1.0, 0.95))
+        self.reply(rag.LEXICAL_MODEL, [chunk(content="a")])
+        sent = self.client.chat.completions.create.call_args.kwargs
+        self.assertEqual((sent["temperature"], sent["top_p"], sent["extra_body"]["top_k"]),
+                         (rag.TEMPERATURE, rag.TOP_P, rag.TOP_K))
+        self.assertNotIn("presence_penalty", sent)
+
     def test_replies_are_capped_and_a_cut_is_reported(self):
         out = io.StringIO()
         last = SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="b", reasoning_content=None),

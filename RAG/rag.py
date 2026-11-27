@@ -63,6 +63,17 @@ EMBED_DIM = 4096                            # Qwen3-Embedding-8B output size
 TEMPERATURE = 1.0
 TOP_P = 0.9
 TOP_K = 40
+# Qwen's own recommendations (Qwen3.6-35B-A3B model card, "Best Practices"): non-thinking mode, and
+# thinking mode for general tasks. With Gemma's settings above, whole-file reviews repeated the same
+# lines until the reply cap; presence_penalty is what the card suggests against endless repetition.
+SAMPLING = {
+    (CODE_MODEL, False): {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0.0, "presence_penalty": 1.5},
+    (CODE_MODEL, True): {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "presence_penalty": 1.5},
+}
+
+
+def sampling(model: str, thinking: bool) -> dict:
+    return SAMPLING.get((model, thinking), {"temperature": TEMPERATURE, "top_p": TOP_P, "top_k": TOP_K})
 
 QDRANT_PATH = str(SCRIPT_DIR / "qdrant_data")   # on-disk vector library, no server needed
 COLLECTION = "docs"
@@ -658,14 +669,16 @@ def stream_reply(messages: list, model: str, echo: bool = True) -> tuple[str, di
     if response.json().get("status") == "error":
         raise RuntimeError(f"Could not load {model}: {response.json().get('message')}")
     loaded = time.monotonic()
-    extra = {"top_k": TOP_K}
+    params = sampling(model, options["thinking"])
+    extra = {name: params[name] for name in ("top_k", "min_p") if name in params}
     if not options["thinking"]:
         extra["enable_thinking"] = False   # Lemonade extension
     stream = client.chat.completions.create(
         model=model,
         messages=([{"role": "system", "content": rules}] if (rules := system_prompt(model)) else []) + messages,
-        temperature=TEMPERATURE,
-        top_p=TOP_P,
+        temperature=params["temperature"],
+        top_p=params["top_p"],
+        **({"presence_penalty": params["presence_penalty"]} if "presence_penalty" in params else {}),
         extra_body=extra,
         # A review once walked motor.c line by line until the 16,384-token context ran out (249 s).
         # With thinking on, the reasoning counts too, so it is left uncapped.
@@ -717,6 +730,7 @@ def stream_reply(messages: list, model: str, echo: bool = True) -> tuple[str, di
         "decode_tps": decode_tps,
         "total_s": end - start,
         "cut": cut,
+        "sampling": params,
     }
     if cut:
         print(f"[reply stopped at the {RAG_REPLY_TOKENS}-token limit]")
