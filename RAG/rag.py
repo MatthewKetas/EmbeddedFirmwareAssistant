@@ -55,6 +55,7 @@ MODEL_OPTIONS = {
 CHAT_TOKENIZER = "Qwen/Qwen3.6-35B-A3B"      # CODE_MODEL's tokenizer, for fitting code context
 RAG_CONTEXT_TOKENS = 4_000                  # retrieved context on turns with code
 RAG_REPLY_TOKENS = 2_048                    # space reserved for generation
+HISTORY_TURNS = 3                          # earlier question-and-answer pairs sent with each question
 # Must match the name Lemonade lists for your embedding model (check /api/v1/models)
 EMBED_MODEL = "Qwen3-Embedding-8B-GGUF"
 EMBED_DIM = 4096                            # Qwen3-Embedding-8B output size
@@ -560,7 +561,10 @@ def build_rag_prompt(question: str, hits, board_context: str = "") -> str:
         # Without this, models filled gaps from memory, e.g. "U0TXD is GPIO3 in typical pinouts".
         "Every value, pin number, register or name you state must appear in the context; "
         "do not fill gaps from general knowledge. If the context lacks something the question "
-        "asks for, say that it is not in the context.\n\n"
+        "asks for, say that it is not in the context. "
+        # Asked to review motor.c right after a question on the stall check, Qwen answered both.
+        "Answer only the question at the end of this message; earlier messages are background "
+        "for follow-up questions.\n\n"
         f"=== CONTEXT ===\n{context}\n=== END CONTEXT ===\n\n"
         f"Question: {question}"
     )
@@ -892,7 +896,9 @@ def interactive_loop():
             history.append({"role": "assistant", "content": stream_reply(history, LEXICAL_MODEL)[0]})
             continue
 
-        # Normal question: retrieve from the library if there is one.
+        # Normal question: retrieve from the library if there is one. Only the last few exchanges go
+        # with it, so the prompt does not grow with every turn of a long session.
+        history = recent(history)
         board_context = board_map.context(board_id, user_input) if board_id else ""
         hits = retrieve(user_input, only, board_id)
         if any("file" in h.payload for h in hits):
@@ -913,6 +919,11 @@ def interactive_loop():
         reply, _ = stream_reply(history + [{"role": "user", "content": content}], pick_model(hits))
         history.append({"role": "user", "content": user_input})
         history.append({"role": "assistant", "content": reply})
+
+
+def recent(history: list) -> list:
+    """The last HISTORY_TURNS question-and-answer pairs."""
+    return history[-2 * HISTORY_TURNS:] if HISTORY_TURNS else []
 
 
 def stop(signum, frame) -> None:

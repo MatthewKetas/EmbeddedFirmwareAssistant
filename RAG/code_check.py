@@ -69,6 +69,27 @@ QUESTIONS = [
 ]
 
 
+# Questions asked straight after an earlier one, as in a rag.py session: (earlier question, check).
+# C10 is the session where Qwen, asked to review motor.c, also answered the stall question again;
+# C11 only makes sense with the earlier question, so it checks that follow-ups still work.
+PRIOR = {
+    "C10": "Is the stall check done before or after the PI controller updates the PWM target?",
+    "C11": "When does the firmware decide that the motor has stalled?",
+}
+QUESTIONS += [
+    ("C10", "Review motor.c for bugs.",
+     [("motor.c", "void motor_control_step"), ("motor.c", "static void motor_fault")],
+     [("does not answer the earlier question",
+       r"^(?![\s\S]*(stall check is (done|performed|called) (before|after)|Final Answer|^\s*Answer:.{0,40}before))")]),
+    ("C11", "And what happens to the motor when that fault trips?",
+     [("motor.c", "static void motor_fault")],
+     [("PWM target set to zero", r"pwm_set_target\(0\)|target\W{0,20}(to )?(0|zero)\b|duty\W{0,20}(to )?(0|zero)\b"),
+      ("driver disabled", r"pwm_enable\(false\)|disabl"),
+      ("state set to MOTOR_FAULT", r"MOTOR_FAULT"),
+      ("event logged", r"log_event|\blog(s|ged)?\b")]),
+]
+
+
 def anchor_line(file: str, text: str) -> int:
     lines = (REPO / file).read_text(encoding="utf-8").splitlines()
     return next(i for i, line in enumerate(lines, 1) if text in line)
@@ -88,13 +109,13 @@ def anchor_ranks(hits, anchors) -> dict[str, int | None]:
     return ranks
 
 
-def sent_with(question: str, hits, numbered: bool) -> list:
+def sent_with(question: str, hits, numbered: bool, history: list | None = None) -> list:
     """The hits that fit the code context budget, with or without line numbers in the prompt."""
     original = rag.numbered
     if not numbered:
         rag.numbered = lambda payload: payload["text"]
     try:
-        return rag.fit_code_context(question, hits, [])
+        return rag.fit_code_context(question, hits, history or [])
     finally:
         rag.numbered = original
 
@@ -137,8 +158,16 @@ def main() -> None:
             # What rag.py sends: a named file comes in addition to the top N, so retrieve again
             # at the normal depth rather than cutting the deep ranking.
             hits = rag.retrieve(question, [source])
-            sent = {numbered: sent_with(question, hits, numbered) for numbered in (False, True)}
             print(f"=== {qid}: {question} ({seconds:.1f}s)")
+            history = []
+            if args.answer and qid in PRIOR:
+                # As rag.py keeps it: the plain earlier question, and the answer it got.
+                earlier = rag.fit_code_context(PRIOR[qid], rag.retrieve(PRIOR[qid], [source]), [])
+                reply, _ = rag.stream_reply([{"role": "user", "content": rag.build_rag_prompt(PRIOR[qid], earlier)}],
+                                            rag.CODE_MODEL, echo=False)
+                history = [{"role": "user", "content": PRIOR[qid]}, {"role": "assistant", "content": reply}]
+                print(f"  asked first: {PRIOR[qid]}")
+            sent = {numbered: sent_with(question, hits, numbered, history) for numbered in (False, True)}
             print(f"  chunks sent: {len(sent[False])} without line numbers, {len(sent[True])} with")
             for name, rank in anchor_ranks(ranked, anchors).items():
                 file, line = name.rsplit(":", 1)
@@ -150,7 +179,8 @@ def main() -> None:
                           if any(holds(h, f, anchor_line(f, t)) for f, t in anchors)]
                 prompt = rag.build_rag_prompt(question, sent[True])
                 for run in range(1, args.runs + 1):
-                    reply, stats = rag.stream_reply([{"role": "user", "content": prompt}], rag.CODE_MODEL, echo=False)
+                    reply, stats = rag.stream_reply(history + [{"role": "user", "content": prompt}], rag.CODE_MODEL,
+                                                    echo=False)
                     result = score_answer(reply, anchors, facts, ranges)
                     rows.append({"label": args.label, "question": qid, "run": run, **result, **stats, "answer": reply})
                     missing = [n for n, _ in facts if n not in result["facts"]]

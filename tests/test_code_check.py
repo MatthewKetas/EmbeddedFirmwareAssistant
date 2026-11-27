@@ -55,6 +55,9 @@ class CodeCheckTests(unittest.TestCase):
             "C7": "It falls back to the defaults and writes them back at once with config_save_now().",
             "C8": "Every 10 ms (CONTROL_PERIOD_MS).",
             "C9": "No serious bugs: the integral is clamped both ways (lines 106-109) and the output to 0-1000.",
+            "C10": "No bugs found in motor.c: both clamps are in place and the stall timer is wrap-safe.",
+            "C11": "motor_fault sets the PWM target to 0, calls pwm_enable(false), sets state to MOTOR_FAULT "
+                   "and logs the reason with log_event.",
         }
         for qid, _, anchors, facts in code_check.QUESTIONS:
             with self.subTest(qid=qid):
@@ -95,6 +98,14 @@ class CodeCheckTests(unittest.TestCase):
                        "The PI controller does not limit the output to 0-1000 per mille."):
             with self.subTest(answer=answer):
                 self.assertEqual(code_check.score_answer(answer, [], facts, [])["facts"], [])
+
+    def test_a_review_that_answers_the_earlier_question_fails(self):
+        # The end of the /code review of motor.c, asked straight after the stall question.
+        leaked = ("**Summary of Bugs:** none.\n\n**Final Answer Formulation:**\n\nThe stall check "
+                  "(`motor_check_protection`) is done **before** the PI controller updates the PWM target.")
+        facts = dict((qid, f) for qid, _, _, f in code_check.QUESTIONS)["C10"]
+        self.assertEqual(code_check.score_answer(leaked, [], facts, [])["facts"], [])
+        self.assertEqual(set(code_check.PRIOR), {"C10", "C11"})
 
     def test_wrong_answers_miss_the_facts(self):
         facts = {qid: f for qid, _, _, f in code_check.QUESTIONS}

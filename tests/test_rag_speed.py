@@ -149,6 +149,30 @@ class SpeedTests(unittest.TestCase):
         })
 
 
+class HistoryTests(unittest.TestCase):
+    def test_only_the_last_few_exchanges_are_kept(self):
+        history = [{"role": r, "content": str(i)} for i in range(5) for r in ("user", "assistant")]
+        with patch.object(rag, "HISTORY_TURNS", 3):
+            self.assertEqual([m["content"] for m in rag.recent(history)], ["2", "2", "3", "3", "4", "4"])
+        with patch.object(rag, "HISTORY_TURNS", 0):
+            self.assertEqual(rag.recent(history), [])
+
+    def test_a_long_session_sends_a_bounded_history(self):
+        doc = SimpleNamespace(payload={"source": "ESP32.pdf", "page": 3, "text": "3.3 V"})
+        commands = iter([f"question {i}" for i in range(6)] + ["/quit"])
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            patch.object(rag, "make_prompt", return_value=lambda _: next(commands)),
+            patch.object(rag, "retrieve", return_value=[doc]),
+            patch.object(rag, "stream_reply", return_value=("answer", {})) as reply,
+        ):
+            rag.interactive_loop()
+        last = reply.call_args.args[0]
+        self.assertEqual(len(last), 2 * rag.HISTORY_TURNS + 1)   # earlier exchanges plus this question
+        self.assertEqual(last[0]["content"], "question 2")
+        self.assertIn("Answer only the question at the end of this message", last[-1]["content"])
+
+
 class RoutingTests(unittest.TestCase):
     def test_code_hits_go_to_the_code_model(self):
         code = SimpleNamespace(payload={"file": "pwm.c", "source": "/repo", "text": ""})
