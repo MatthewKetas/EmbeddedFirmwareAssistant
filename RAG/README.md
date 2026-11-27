@@ -183,6 +183,30 @@ Without any rules Qwen found the missing full check in only one of six reviews, 
 
 The checklist found the missing full check in all three runs and did as well on the held-out bugs, including the `uint8_t` counter that no review without it noticed, so the gain is not only on the bugs it lists. The cost is length: about 10-12 s more per review at 58 tok/s. Without a prompt, one review was 28 tokens and found nothing, and one called the `i2c_write` usage correct. The checklist put the more severe bug first less often on the held-out files (2 of 6 against 3 of 6), mostly by listing the missing `break` before the dangling pointer. The script counts only planted bugs, so I have not checked whether the longer reviews also contain invented findings. Qwen now gets the checklist; Gemma keeps the answer rules.
 
+## My code retrieval check
+
+The review check sends whole files, so it does not test what `/code` depends on: finding the right snippets in a repository. For that I wrote a made-up motor controller in [code_cases/motor_fw](code_cases/motor_fw), 13 files and about 900 lines with its own hardware layer, so no answer can come from memory of a real SDK, and eight questions whose answers sit in known lines (the PWM pin and frequency, what happens when the UART buffer is full, the sensor retries, the stall condition, the watchdog, the shutdown voltage, a failed configuration CRC, and the control period). [code_check.py](code_check.py) indexes it into its own collection, shows where the chunks holding each answer rank and whether they fit the 4,000-token code budget with and without line numbers, and with `--answer` scores Qwen's answers on key facts and on citing a line in an answer chunk.
+
+The first run showed that a function's explanatory comment went into the chunk before it, because chunks split at function boundaries. The comments and `#define`s ranked 1-4, but four of the functions ranked 30th or lower. I now keep a comment directly above a function, with no blank line, in the function's chunk:
+
+| Function | Rank before | Rank after |
+|---|---|---|
+| `uart_rx_isr` (buffer full) | below 30 | 2 |
+| `env_sensor_read` (retries) | below 30 | 2 |
+| `motor_check_protection` (stall) | 30 | 1 |
+| `watchdog_service` (feeding) | 30 | 1 |
+
+Every answer chunk now ranks in the top 3, and the repository makes 61 chunks instead of 77. The budget cut in once: on the retries question, 9 of 10 chunks fit with line numbers against 10 without, and both answer chunks were still sent. Prompts grew from about 1,900-2,700 tokens to 2,900-4,200 because function chunks now carry their comments.
+
+One answer per question, checked by hand:
+
+| Chunking | Key facts stated | Answers citing an answer line | Answer length |
+|---|---|---|---|
+| Comments split off | 17/17 | 6/8 | 46-316 tokens |
+| Comments with their function | 16/17 | 8/8 | 60-283 tokens |
+
+The one miss is real: asked how quickly the board shuts down, Qwen said the interval between battery readings "is not in the context", though the chunk it cited begins with "Called once a second". Five of the misses my patterns reported were correct answers written as the code spells them ("2000u milliseconds", "20,000 Hz", "pin number 18"); I fixed the patterns and kept those answers as tests. Any repository already indexed with `/code` keeps its old chunks until it is indexed again.
+
 ## My evidence
 
 I used [ESP32 Series Datasheet v5.3](datasheets/ESP32.pdf), a 78-page hardware reference. The [full milestone report](../reading-and-background/milestone-data-collection/milestone-1.md) preserves the prompts, source hash, evidence locations, all ten response records, and individual score explanations. No new model responses were generated for this review.

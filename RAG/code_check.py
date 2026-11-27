@@ -29,7 +29,7 @@ MS = r"\s*u?\W{0,4}\s*(ms|milliseconds?)\b"
 QUESTIONS = [
     ("C1", "Which GPIO drives the motor PWM output, and at what frequency does it switch?",
      [("board_pins.h", "#define PIN_MOTOR_PWM"), ("pwm.c", "#define PWM_FREQUENCY_HZ")],
-     [("GPIO 18", r"\b(GPIO|pin|IO)\s*_?18\b|PIN_MOTOR_PWM\W{1,20}18\b"), ("20 kHz", rf"20\s*kHz|\b20{THOUSANDS}000\s*u?\s*(Hz|hertz)?\b")]),
+     [("GPIO 18", r"\b(GPIO|pin|IO)(\s*number)?\W{0,4}\s*_?18\b|PIN_MOTOR_PWM\W{1,20}18\b"), ("20 kHz", rf"20\s*kHz|\b20{THOUSANDS}000\s*u?\s*(Hz|hertz)?\b")]),
     ("C2", "What happens to incoming UART bytes when the receive buffer is full?",
      [("uart_rx.c", "void uart_rx_isr")],
      [("new byte dropped", r"drop|discard|ignor|lost|not stored"), ("overrun counted", r"rx_overruns|overrun")]),

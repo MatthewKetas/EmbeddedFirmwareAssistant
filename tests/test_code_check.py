@@ -67,16 +67,17 @@ class CodeCheckTests(unittest.TestCase):
             "C5": "The watchdog timeout is **2000u** milliseconds (defined as **WDT_TIMEOUT_MS**).",
             "C6": "below **BATTERY_SHUTDOWN_MV** (defined as **3300u** mV) [motor_fw/power.c:8-9].",
             "C8": "The main loop runs the motor control step every 10 milliseconds.",
+            "C1b": "The GPIO is **PIN_MOTOR_PWM** (pin number **18**) [motor_fw/board_pins.h:6].",
         }
-        names = {"C1": "20 kHz", "C5": "2000 ms", "C6": "3300 mV", "C8": "every 10 ms"}
+        names = {"C1": "20 kHz", "C5": "2000 ms", "C6": "3300 mV", "C8": "every 10 ms", "C1b": "GPIO 18"}
         facts = {qid: f for qid, _, _, f in code_check.QUESTIONS}
         for qid, answer in cases.items():
             with self.subTest(qid=qid):
-                self.assertIn(names[qid], code_check.score_answer(answer, [], facts[qid], [])["facts"])
+                self.assertIn(names[qid], code_check.score_answer(answer, [], facts[qid[:2]], [])["facts"])
 
     def test_wrong_answers_miss_the_facts(self):
         facts = {qid: f for qid, _, _, f in code_check.QUESTIONS}
-        cases = [("C1", "The PWM runs on GPIO 19 at 25 kHz.", 0), ("C4", "A stall is 2 A for one second.", 0),
+        cases = [("C1", "The PWM runs on GPIO 19 at 25 kHz.", 0), ("C1", "Pin number 118 at 2 kHz.", 0), ("C4", "A stall is 2 A for one second.", 0),
                  ("C8", "The control step runs every 100 ms.", 0), ("C6", "It shuts down at 3.0 V right away.", 0),
                  ("C5", "The timeout is 12000 ms, fed by a timer.", 0), ("C8", "It runs every 110 milliseconds.", 0)]
         for qid, answer, expected in cases:
