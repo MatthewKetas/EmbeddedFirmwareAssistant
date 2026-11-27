@@ -21,14 +21,16 @@ class ReviewBenchTests(unittest.TestCase):
 
     def test_case_is_labelled_like_a_repository_snippet(self):
         prompt = review_bench.rag.build_rag_prompt(review_bench.QUESTION, [review_bench.case_hit("adc_average.c")])
-        self.assertIn("[review_cases/adc_average.c:1-24]\n/* Averages", prompt)
+        self.assertIn("[review_cases/adc_average.c:1-24]\n 1 | /* Averages", prompt)
+        self.assertIn("\n13 |     uint16_t sum = 0;\n", prompt)
         self.assertIn("Question: Review this code for bugs.", prompt)
 
     def test_a_review_that_names_both_bugs_severe_first(self):
         answer = ("1. adc_average.c line 13: uint16_t sum overflows after 16 samples; use uint32_t.\n"
                   "2. line 17: division by zero when count is 0.")
         self.assertEqual(review_bench.score(answer, "adc_average.c"),
-                         {"found": [b for b, *_ in review_bench.BUGS["adc_average.c"]], "of": 2, "severe_first": True})
+                         {"found": [b for b, *_ in review_bench.BUGS["adc_average.c"]], "of": 2, "severe_first": True,
+                          "located": [b for b, *_ in review_bench.BUGS["adc_average.c"]]})   # lines 13 and 17
 
     def test_severe_bug_mentioned_second_is_not_first(self):
         answer = "Missing check: i2c_write return value is ignored. Also len can exceed the 4-byte buf, a buffer overflow."
@@ -89,6 +91,28 @@ class ReviewBenchTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(review_bench.score(quote, name)["found"], [])
 
+    def test_line_numbers_are_scored_per_finding(self):
+        # From the checklist-read run: the wrap bug is on line 19, the review said 26.
+        uart = ("Bug 1: Array bounds out-of-bounds write in `uart_rx_isr`\n- **File**: [review_cases/uart_ring.c:1-35]\n"
+                "- **Line**: 26\n- The check `next > RB_SIZE` is an off-by-one.\n\n"
+                "Bug 2: Buffer full condition not handled\n- **Line**: 23\n- It does not check if the ring buffer is full.")
+        result = review_bench.score(uart, "uart_ring.c")
+        self.assertEqual(len(result["found"]), 2)
+        self.assertEqual(result["located"], [review_bench.BUGS["uart_ring.c"][1][0]])   # 23 is right, 26 is not
+        # Line 17 for the division; "Lines 13-16" covers the uint16_t sum on line 13.
+        adc = ("**1. Integer Overflow in Summation**\n* **File:** `review_cases/adc_average.c`, Lines 13-16\n"
+               "* `uint16_t sum` overflows; use uint32_t sum.\n\n"
+               "**2. Division by Zero**\n* **File:** `review_cases/adc_average.c`, Line 17\n* If count is 0, division by zero.")
+        self.assertEqual(review_bench.score(adc, "adc_average.c")["located"],
+                         [b for b, *_ in review_bench.BUGS["adc_average.c"]])
+
+    def test_the_whole_file_range_is_not_a_location(self):
+        self.assertFalse(review_bench.located([(1, 35)], 19))
+        self.assertTrue(review_bench.located([(18, 20)], 19))
+        self.assertTrue(review_bench.located([(42, 42)], 43))   # within one line
+        self.assertFalse(review_bench.located([(14, 14)], 12))
+        self.assertEqual(review_bench.cited_lines("see uart_ring.c:22-26 and line 30", 5), [(22, 26), (30, 30)])
+
     def test_summary_groups_by_prompt_and_keeps_held_out_files_apart(self):
         rows = [
             {"prompt": "none", "case": "adc_average.c", "found": ["a", "b"], "of": 2, "severe_first": True,
@@ -98,8 +122,9 @@ class ReviewBenchTests(unittest.TestCase):
             {"prompt": "none", "case": "cmd_parser.c", "found": [], "of": 2, "severe_first": False,
              "completion_tokens": 900, "total_s": 20.0},
         ]
-        self.assertEqual(review_bench.summarize(rows), [("none", "checked", 2, 3, 4, 1, 500, 12.0),
-                                                        ("none", "held out", 1, 0, 2, 0, 900, 20.0)])
+        rows[0]["located"] = ["a"]
+        self.assertEqual(review_bench.summarize(rows), [("none", "checked", 2, 3, 4, 1, 1, 500, 12.0),
+                                                        ("none", "held out", 1, 0, 2, 0, 0, 900, 20.0)])
 
     def test_held_out_bugs_are_matched_and_not_named_by_the_checklist(self):
         cases = [

@@ -88,8 +88,33 @@ def bug_line(name: str, anchor: str) -> int:
     return next(i for i, line in enumerate(lines, 1) if anchor in line)
 
 
+# Where one finding ends and the next starts: a heading, "1.", "**2.", "Bug 3", "Finding 4".
+FINDING_START = re.compile(r"\n\s*(?:#+\s|\*\*\s*\d+\.|\d+\.\s|\*\*Bug\s*\d|Bug\s*\d|Finding\s*\d)", re.I)
+# "line 19", "Lines 13-16", "**Line:** 26", "uart_ring.c:19" or "uart_ring.c:22-26".
+CITED_LINES = re.compile(r"\blines?\W{0,6}(\d+)(?:\s*(?:-|–|to)\s*(\d+))?|\.[ch]:(\d+)(?:\s*-\s*(\d+))?", re.I)
+
+
+def cited_lines(answer: str, position: int) -> list[tuple[int, int]]:
+    """Line ranges cited in the finding that contains this position."""
+    starts = [0] + [m.start() for m in FINDING_START.finditer(answer)] + [len(answer)]
+    begin = max(s for s in starts if s <= position)
+    end = min(s for s in starts if s > position) if position < len(answer) else len(answer)
+    ranges = []
+    for m in CITED_LINES.finditer(answer[begin:end]):
+        first = int(m.group(1) or m.group(3))
+        last = int(m.group(2) or m.group(4) or first)
+        ranges.append((first, last))
+    return ranges
+
+
+def located(ranges: list[tuple[int, int]], line: int) -> bool:
+    """A range of at most 8 lines covering the bug line, give or take one; "1-35" (the file) does not count."""
+    return any(last - first <= 8 and first - 1 <= line <= last + 1 for first, last in ranges)
+
+
 def score(answer: str, name: str) -> dict:
-    """Which planted bugs the review names, and whether the most severe one comes first."""
+    """Which planted bugs the review names, whether the most severe one comes first, and which
+    found bugs it puts on the right line."""
     positions = {}
     for bug, _, pattern, *clears in BUGS[name]:
         for match in re.finditer(pattern, answer, FLAGS):
@@ -98,8 +123,11 @@ def score(answer: str, name: str) -> dict:
                 positions[bug] = match.start()
                 break
     severe = BUGS[name][0][0]
-    return {"found": [bug for bug, *_ in BUGS[name] if bug in positions], "of": len(BUGS[name]),
-            "severe_first": severe in positions and positions[severe] == min(positions.values())}
+    found = [bug for bug, *_ in BUGS[name] if bug in positions]
+    lines = {bug: bug_line(name, anchor) for bug, anchor, *_ in BUGS[name]}
+    return {"found": found, "of": len(BUGS[name]),
+            "severe_first": severe in positions and positions[severe] == min(positions.values()),
+            "located": [bug for bug in found if located(cited_lines(answer, positions[bug]), lines[bug])]}
 
 
 def snippets(answer: str, name: str, found: list[str]) -> list[tuple[str, str]]:
@@ -111,14 +139,15 @@ def snippets(answer: str, name: str, found: list[str]) -> list[tuple[str, str]]:
 
 
 def summarize(rows: list[dict]) -> list[tuple]:
-    """(prompt, files, reviews, bugs found, bugs total, severe first, median tokens, median total s)
-    per system prompt, for the checked files and the held-out files apart."""
+    """(prompt, files, reviews, bugs found, bugs total, severe first, found bugs on the right line,
+    median tokens, median total s) per system prompt, for the checked files and the held-out files apart."""
     out = []
     groups = dict.fromkeys((r["prompt"], r["case"] in HELD_OUT) for r in rows)
     for prompt, held in groups:   # first-seen order: checked files come before held-out ones
         group = [r for r in rows if r["prompt"] == prompt and (r["case"] in HELD_OUT) == held]
         out.append((prompt, "held out" if held else "checked", len(group), sum(len(r["found"]) for r in group),
                     sum(r["of"] for r in group), sum(r["severe_first"] for r in group),
+                    sum(len(r.get("located", [])) for r in group),
                     statistics.median(r.get("completion_tokens") or 0 for r in group),
                     statistics.median(r.get("total_s") or 0 for r in group)))
     return out
@@ -161,18 +190,19 @@ def main() -> None:
         rag.unload_model(rag.CODE_MODEL)
 
     print(f"\nSaved {len(rows)} reviews to {out}\n")
-    print("| system prompt | files | reviews | planted bugs found | most severe bug first | median answer tokens | median total s |")
-    print("|---|---|---|---|---|---|---|")
-    for prompt_name, files, n, found, total, first, tokens, seconds in summarize(rows):
+    print("| system prompt | files | reviews | planted bugs found | found bugs on the right line | most severe bug first | median answer tokens | median total s |")
+    print("|---|---|---|---|---|---|---|---|")
+    for prompt_name, files, n, found, total, first, on_line, tokens, seconds in summarize(rows):
         print(f"| {prompt_name} | {files} | {n} | {found}/{total} ({100 * found / total:.0f}%) | "
-              f"{first}/{n} | {tokens:.0f} | {seconds:.1f} |")
+              f"{on_line}/{found} | {first}/{n} | {tokens:.0f} | {seconds:.1f} |")
     print("\nTimes include prefill; runs 2-3 of a file reuse the cached prompt.")
     print("\nMatched bugs (pattern matches: confirm each one), and bugs missed:")
     for row in rows:
         tag = f"{row['prompt']} {row['case']} run {row['run']}"
         for bug, text in snippets(row["answer"], row["case"], row["found"]):
             line = bug_line(row["case"], next(a for b, a, *_ in BUGS[row["case"]] if b == bug))
-            print(f"- {tag}: found '{bug}' (line {line})\n    ...{text}...")
+            where = "right line" if bug in row.get("located", []) else "line not given or wrong"
+            print(f"- {tag}: found '{bug}' (line {line}, {where})\n    ...{text}...")
         for bug, *_ in BUGS[row["case"]]:
             if bug not in row["found"]:
                 print(f"- {tag}: MISSED '{bug}'")

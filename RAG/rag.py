@@ -505,8 +505,18 @@ def source_label(payload) -> str:
     return f"{payload['source']}{page}"
 
 
+def numbered(payload) -> str:
+    """A code chunk with its file line numbers. Without them Qwen counted lines itself and cited
+    lines 1-7 away from the bug in most reviews (RAG/review_bench.py)."""
+    if "file" not in payload:
+        return payload["text"]
+    lines = payload["text"].split("\n")
+    width = len(str(payload["start_line"] + len(lines) - 1))
+    return "\n".join(f"{n:>{width}} | {line}" for n, line in enumerate(lines, payload["start_line"]))
+
+
 def build_rag_prompt(question: str, hits, board_context: str = "") -> str:
-    parts = [f"[{source_label(h.payload)}]\n{h.payload['text']}" for h in hits]
+    parts = [f"[{source_label(h.payload)}]\n{numbered(h.payload)}" for h in hits]
     if board_context:
         parts.insert(0, board_context)
     context = "\n\n---\n\n".join(parts)

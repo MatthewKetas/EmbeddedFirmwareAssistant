@@ -55,8 +55,9 @@ class CodeTests(unittest.TestCase):
                 rag.interactive_loop()
                 prompt = reply.call_args.args[0][-1]["content"]
                 self.assertEqual(reply.call_args.args[1], rag.CODE_MODEL)
-                self.assertIn("[motor fw/pins.h:1-1]\n#define PWM_PIN 12", prompt)
-                self.assertIn("[motor fw/pwm.c:3-5]\n#if BOARD_A", prompt)
+                self.assertIn("[motor fw/pins.h:1-1]\n1 | #define PWM_PIN 12", prompt)
+                # Lines carry their numbers in the file, so the model need not count them.
+                self.assertIn("[motor fw/pwm.c:3-5]\n3 | #if BOARD_A\n4 | int pwm(void)", prompt)
                 self.assertNotIn("unrelated.pdf", prompt)
 
                 header.write_text("#define PWM_PIN 13\n")
