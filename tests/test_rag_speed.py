@@ -143,8 +143,9 @@ class SpeedTests(unittest.TestCase):
         self.assertEqual(sent[0], {"role": "system", "content": rag.REVIEW_CHECKLIST})
         self.assertNotIn("what it lacks", sent[0]["content"])
         self.assertIn("full or empty", sent[0]["content"])
-        # Qwen wrote its tracing out (up to 12,020 tokens) when told only to report traced bugs.
-        self.assertIn("write only the findings, not the tracing", sent[0]["content"])
+        # "If there are no real bugs, say so in one line" let Qwen pass files with planted bugs in 5-7 tokens.
+        self.assertIn("Only report a bug you have traced through the code.", sent[0]["content"])
+        self.assertNotIn("say so in one line", sent[0]["content"])
 
     def test_rules_ask_for_the_key_values_and_set_no_length_cap(self):
         # A "briefly ... under 350 words" version cost 9 points of key facts in the rules bench.

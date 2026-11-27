@@ -643,10 +643,11 @@ REVIEW_CHECKLIST = (
     "- return values that are ignored;\n"
     "- data shared with interrupts or other threads (volatile, atomic access);\n"
     "- counters and timers that wrap around.\n"
-    # "Only report a bug you have traced" made Qwen write the tracing out: 5,351 and 12,020 tokens.
-    "Trace each suspected bug through the code before reporting it, but write only the findings, "
-    "not the tracing: every real bug, most severe first, with file, line and fix. "
-    "If there are no real bugs, say so in one line."
+    "Report every real bug you find, most severe first, with file, line and fix. "
+    # A rewording ("write only the findings ... if there are no real bugs, say so in one line") did not
+    # stop whole-file reviews running on, and Qwen answered "No real bugs" in 5-7 tokens for files with
+    # planted bugs: 26 of 36 found, against 35 with this wording.
+    "Only report a bug you have traced through the code."
 )
 
 
