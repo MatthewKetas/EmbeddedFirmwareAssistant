@@ -146,8 +146,6 @@ class SpeedTests(unittest.TestCase):
         # "If there are no real bugs, say so in one line" let Qwen pass files with planted bugs in 5-7 tokens.
         self.assertIn("Only report a bug you have traced through the code.", sent[0]["content"])
         self.assertNotIn("say so in one line", sent[0]["content"])
-        # Whole-file reviews hit the reply cap before writing any findings.
-        self.assertIn("Start your answer with the list of every real bug", sent[0]["content"])
 
     def test_rules_ask_for_the_key_values_and_set_no_length_cap(self):
         # A "briefly ... under 350 words" version cost 9 points of key facts in the rules bench.

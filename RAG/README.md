@@ -228,7 +228,7 @@ Qwen had been using Gemma's sampling settings (temperature 1.0, top_p 0.9, top_k
 | Reworded | Shared | 26/36 | 21/26 | 232 / 235 | 7.9 s |
 | Reworded | Qwen's card | 31/36 | 29/31 | 584 / 178 | 11.4 s |
 
-The rewording cost the bugs; the card settings did not, and made reviews about 30% shorter. Qwen now uses the card settings with the original wording, and Gemma keeps its own. The card settings did not stop the whole-file review of `motor.c` from running to the 2,048-token cap, so that is bounded only by the cap.
+The rewording cost the bugs; the card settings did not, and made reviews about 30% shorter. Qwen now uses the card settings with the original wording, and Gemma keeps its own. The card settings did not stop the whole-file review of `motor.c` from running to the 2,048-token cap. I then tried asking for the findings list first, so the cap would cut only the explanation: with the card settings it found 30 of 36 planted bugs (one of the 31 matches called the planted wrap bug correct), 23 of 31 on the right line, in a median 9.2 s, so I reverted it too. A whole-file review can still stop at the cap; on single files with real bugs the original wording reached it once in 18 reviews, and that review still found both bugs.
 
 ## My evidence
 
