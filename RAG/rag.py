@@ -643,7 +643,10 @@ REVIEW_CHECKLIST = (
     "- return values that are ignored;\n"
     "- data shared with interrupts or other threads (volatile, atomic access);\n"
     "- counters and timers that wrap around.\n"
-    "Report every real bug you find, most severe first, with file, line and fix. "
+    # Findings first, so the reply cap cuts only the working: whole-file reviews ran to the cap with
+    # their findings still unwritten.
+    "Start your answer with the list of every real bug you find, most severe first, each with file, "
+    "line and fix; put any explanation after the list. "
     # A rewording ("write only the findings ... if there are no real bugs, say so in one line") did not
     # stop whole-file reviews running on, and Qwen answered "No real bugs" in 5-7 tokens for files with
     # planted bugs: 26 of 36 found, against 35 with this wording.
